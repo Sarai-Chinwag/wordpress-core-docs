@@ -60,13 +60,25 @@ default → blocks → theme → custom
 
 ## Components
 
+### Settings
 | Component | Description |
 |-----------|-------------|
-| [settings.md](./settings.md) | Editor feature toggles and presets |
+| [settings-color.md](./settings-color.md) | Color palettes, gradients, duotone |
+| [settings-typography.md](./settings-typography.md) | Font families, sizes, fluid typography |
+| [settings-spacing.md](./settings-spacing.md) | Spacing scale, padding, margin |
+| [settings-layout.md](./settings-layout.md) | Content width, wide/full alignment |
+| [settings-blocks.md](./settings-blocks.md) | Per-block setting overrides |
+| [settings-other.md](./settings-other.md) | Appearance tools, border, shadow |
+
+### Styles & Structure
+| Component | Description |
+|-----------|-------------|
 | [styles.md](./styles.md) | Global and element styles |
-| [presets.md](./presets.md) | Color palettes, font sizes, spacing |
-| [elements.md](./elements.md) | Styling HTML elements |
-| [blocks.md](./blocks.md) | Per-block settings and styles |
+| [css-generation.md](./css-generation.md) | How CSS is generated from theme.json |
+| [custom-templates.md](./custom-templates.md) | Custom template definitions |
+| [template-parts.md](./template-parts.md) | Template part areas |
+| [patterns.md](./patterns.md) | Pattern registration |
+| [schema-overview.md](./schema-overview.md) | Full schema reference |
 
 ## Quick Example
 
