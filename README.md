@@ -27,6 +27,7 @@ This documentation is generated directly from WordPress source code to provide a
 
 ## Getting Started
 
+- [`root-files/`](./root-files/) — WordPress root entry points
 - [`bootstrap/`](./bootstrap/) — WordPress bootstrap process
 - [`wp-config/`](./wp-config/) — Configuration constants and setup
 - [`database-schema/`](./database-schema/) — Core database tables and schema
@@ -68,6 +69,7 @@ This documentation is generated directly from WordPress source code to provide a
 ## Blocks
 
 - [`blocks/`](./blocks/) — Block editor internals
+- [`core-blocks/`](./core-blocks/) — 106 core blocks (paragraph, image, columns, etc.)
 - [`block-bindings/`](./block-bindings/) — Block bindings
 - [`block-patterns/`](./block-patterns/) — Block patterns
 - [`block-templates/`](./block-templates/) — Block templates
@@ -117,8 +119,10 @@ This documentation is generated directly from WordPress source code to provide a
 ## Admin
 
 - [`admin-api/`](./admin-api/) — Admin APIs
+- [`admin-includes/`](./admin-includes/) — Admin include files
 - [`admin-bar/`](./admin-bar/) — Admin bar
 - [`ajax/`](./ajax/) — Admin AJAX handlers
+- [`wp-admin-pages/`](./wp-admin-pages/) — Admin page files
 
 ## Multisite
 
