@@ -1,65 +1,76 @@
 # Abilities API Functions
 
-Core functions for registering and managing abilities.
+Core functions for ability registration and management.
 
-## Ability Functions
+**Source:** `wp-includes/abilities-api.php`
 
-### wp_register_ability()
+---
 
-Registers a new ability.
+## wp_register_ability()
+
+Registers a new ability. Must be called during `wp_abilities_api_init` action.
 
 ```php
 wp_register_ability( string $name, array $args ): ?WP_Ability
 ```
 
-**Parameters:**
+### Parameters
 
-| Name | Type | Description |
-|------|------|-------------|
+| Parameter | Type | Description |
+|-----------|------|-------------|
 | `$name` | string | Namespaced ability name (e.g., `my-plugin/my-ability`) |
-| `$args` | array | Configuration array (see below) |
+| `$args` | array | Configuration array |
 
-**Configuration Options:**
+### Args
 
 | Key | Type | Required | Description |
 |-----|------|----------|-------------|
 | `label` | string | Yes | Human-readable label |
 | `description` | string | Yes | Detailed description |
-| `category` | string | Yes | Category slug |
+| `category` | string | Yes | Category slug (must be registered) |
 | `execute_callback` | callable | Yes | Execution function |
 | `permission_callback` | callable | Yes | Permission check function |
-| `input_schema` | array | No | JSON Schema for input |
-| `output_schema` | array | No | JSON Schema for output |
+| `input_schema` | array | No | JSON Schema for input validation |
+| `output_schema` | array | No | JSON Schema for output validation |
 | `meta` | array | No | Additional metadata |
+| `meta.annotations` | array | No | `readonly`, `destructive`, `idempotent` hints |
+| `meta.show_in_rest` | bool | No | Expose via REST API (default: false) |
 | `ability_class` | string | No | Custom class extending WP_Ability |
 
-**Returns:** `WP_Ability` instance on success, `null` on failure.
+### Returns
 
-**Example:**
+`WP_Ability` on success, `null` on failure.
+
+### Example
 
 ```php
 add_action( 'wp_abilities_api_init', function() {
-    wp_register_ability( 'my-plugin/export-users', array(
-        'label'               => __( 'Export Users', 'my-plugin' ),
-        'description'         => __( 'Exports user data to CSV.', 'my-plugin' ),
-        'category'            => 'data-export',
-        'execute_callback'    => 'my_plugin_export_users',
-        'permission_callback' => fn() => current_user_can( 'export' ),
+    wp_register_ability( 'my-plugin/analyze-text', array(
+        'label'               => __( 'Analyze Text', 'my-plugin' ),
+        'description'         => __( 'Performs sentiment analysis.', 'my-plugin' ),
+        'category'            => 'text-processing',
+        'execute_callback'    => 'my_plugin_analyze_text',
+        'permission_callback' => fn() => current_user_can( 'edit_posts' ),
         'input_schema'        => array(
-            'type' => 'string',
-            'enum' => array( 'subscriber', 'author', 'editor', 'administrator' ),
+            'type'      => 'string',
+            'minLength' => 10,
+            'required'  => true,
         ),
         'output_schema'       => array(
             'type' => 'string',
+            'enum' => array( 'positive', 'negative', 'neutral' ),
         ),
-        'meta'                => array( 'show_in_rest' => true ),
+        'meta'                => array(
+            'annotations'  => array( 'readonly' => true ),
+            'show_in_rest' => true,
+        ),
     ) );
 } );
 ```
 
 ---
 
-### wp_unregister_ability()
+## wp_unregister_ability()
 
 Removes a registered ability.
 
@@ -67,25 +78,19 @@ Removes a registered ability.
 wp_unregister_ability( string $name ): ?WP_Ability
 ```
 
-**Parameters:**
+### Parameters
 
-| Name | Type | Description |
-|------|------|-------------|
+| Parameter | Type | Description |
+|-----------|------|-------------|
 | `$name` | string | Ability name to unregister |
 
-**Returns:** The unregistered `WP_Ability` instance, or `null` if not found.
+### Returns
 
-**Example:**
-
-```php
-if ( wp_has_ability( 'other-plugin/some-ability' ) ) {
-    wp_unregister_ability( 'other-plugin/some-ability' );
-}
-```
+Unregistered `WP_Ability` on success, `null` if not found.
 
 ---
 
-### wp_has_ability()
+## wp_has_ability()
 
 Checks if an ability is registered.
 
@@ -93,25 +98,19 @@ Checks if an ability is registered.
 wp_has_ability( string $name ): bool
 ```
 
-**Parameters:**
+### Parameters
 
-| Name | Type | Description |
-|------|------|-------------|
+| Parameter | Type | Description |
+|-----------|------|-------------|
 | `$name` | string | Ability name to check |
 
-**Returns:** `true` if registered, `false` otherwise.
+### Returns
 
-**Example:**
-
-```php
-if ( wp_has_ability( 'premium-plugin/advanced-export' ) ) {
-    echo 'Premium export available';
-}
-```
+`true` if registered, `false` otherwise.
 
 ---
 
-### wp_get_ability()
+## wp_get_ability()
 
 Retrieves a registered ability.
 
@@ -119,26 +118,19 @@ Retrieves a registered ability.
 wp_get_ability( string $name ): ?WP_Ability
 ```
 
-**Parameters:**
+### Parameters
 
-| Name | Type | Description |
-|------|------|-------------|
-| `$name` | string | Ability name to retrieve |
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `$name` | string | Ability name |
 
-**Returns:** `WP_Ability` instance, or `null` if not registered.
+### Returns
 
-**Example:**
-
-```php
-$ability = wp_get_ability( 'my-plugin/export-data' );
-if ( $ability ) {
-    echo $ability->get_label() . ': ' . $ability->get_description();
-}
-```
+`WP_Ability` instance or `null` if not registered.
 
 ---
 
-### wp_get_abilities()
+## wp_get_abilities()
 
 Retrieves all registered abilities.
 
@@ -146,36 +138,28 @@ Retrieves all registered abilities.
 wp_get_abilities(): array
 ```
 
-**Returns:** Array of `WP_Ability` instances.
+### Returns
 
-**Example:**
-
-```php
-foreach ( wp_get_abilities() as $ability ) {
-    printf( "%s: %s\n", $ability->get_label(), $ability->get_description() );
-}
-```
+Array of `WP_Ability` instances.
 
 ---
 
-## Category Functions
+## wp_register_ability_category()
 
-### wp_register_ability_category()
-
-Registers a new ability category.
+Registers a new ability category. Must be called during `wp_abilities_api_categories_init` action.
 
 ```php
 wp_register_ability_category( string $slug, array $args ): ?WP_Ability_Category
 ```
 
-**Parameters:**
+### Parameters
 
-| Name | Type | Description |
-|------|------|-------------|
-| `$slug` | string | Unique category slug |
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `$slug` | string | Category slug |
 | `$args` | array | Configuration array |
 
-**Configuration Options:**
+### Args
 
 | Key | Type | Required | Description |
 |-----|------|----------|-------------|
@@ -183,24 +167,26 @@ wp_register_ability_category( string $slug, array $args ): ?WP_Ability_Category
 | `description` | string | Yes | Category description |
 | `meta` | array | No | Additional metadata |
 
-**Returns:** `WP_Ability_Category` instance on success, `null` on failure.
+### Returns
 
-**Example:**
+`WP_Ability_Category` on success, `null` on failure.
+
+### Example
 
 ```php
 add_action( 'wp_abilities_api_categories_init', function() {
-    wp_register_ability_category( 'content-management', array(
-        'label'       => __( 'Content Management', 'my-plugin' ),
-        'description' => __( 'Abilities for managing content.', 'my-plugin' ),
+    wp_register_ability_category( 'text-processing', array(
+        'label'       => __( 'Text Processing', 'my-plugin' ),
+        'description' => __( 'Abilities for analyzing text.', 'my-plugin' ),
     ) );
 } );
 ```
 
 ---
 
-### wp_unregister_ability_category()
+## wp_unregister_ability_category()
 
-Removes a registered ability category.
+Removes a registered category.
 
 ```php
 wp_unregister_ability_category( string $slug ): ?WP_Ability_Category
@@ -208,9 +194,9 @@ wp_unregister_ability_category( string $slug ): ?WP_Ability_Category
 
 ---
 
-### wp_has_ability_category()
+## wp_has_ability_category()
 
-Checks if an ability category is registered.
+Checks if a category is registered.
 
 ```php
 wp_has_ability_category( string $slug ): bool
@@ -218,9 +204,9 @@ wp_has_ability_category( string $slug ): bool
 
 ---
 
-### wp_get_ability_category()
+## wp_get_ability_category()
 
-Retrieves a registered ability category.
+Retrieves a registered category.
 
 ```php
 wp_get_ability_category( string $slug ): ?WP_Ability_Category
@@ -228,9 +214,9 @@ wp_get_ability_category( string $slug ): ?WP_Ability_Category
 
 ---
 
-### wp_get_ability_categories()
+## wp_get_ability_categories()
 
-Retrieves all registered ability categories.
+Retrieves all registered categories.
 
 ```php
 wp_get_ability_categories(): array
