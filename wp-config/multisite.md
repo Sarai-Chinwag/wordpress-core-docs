@@ -137,22 +137,170 @@ define( 'SUNRISE', true );
 
 - **Type**: Boolean
 - **Default**: Not defined (false)
-- **Purpose**: Loads `wp-content/sunrise.php` before multisite is fully loaded
-- **Use Cases**:
-  - Domain mapping
-  - Custom routing logic
-  - Early multisite modifications
+- **Purpose**: Loads `wp-content/sunrise.php` very early in the WordPress multisite boot process
+- **Location**: `wp-content/sunrise.php` (must be a drop-in at this exact path)
 
-#### sunrise.php Example
+#### When SUNRISE Loads
+
+SUNRISE loads extremely early in WordPress — after `ms-settings.php` runs but **before**:
+- The current site is determined
+- `$current_blog` is set
+- Any plugins load
+- Any themes load
+- Most WordPress functions are available
+
+**Boot sequence with SUNRISE:**
+```
+wp-load.php
+  └── wp-config.php (SUNRISE defined here)
+       └── wp-settings.php
+            └── ms-settings.php
+                 └── sunrise.php ← LOADS HERE (if SUNRISE is true)
+                      └── ms-blogs.php (site determination)
+                           └── plugins load
+                                └── theme loads
+```
+
+#### What's Available in sunrise.php
+
+| Available | Not Available |
+|-----------|---------------|
+| `$wpdb` (database) | `$current_blog` (not set yet) |
+| `$_SERVER`, `$_GET`, `$_POST` | Most WordPress functions |
+| `ABSPATH`, `WPINC` constants | `get_option()`, `get_site_option()` |
+| Raw database queries | Hooks/filters (not loaded) |
+| `define()` constants | Plugin/theme functions |
+
+#### Common Use Cases
+
+1. **Domain Mapping** — Map custom domains to network sites
+2. **Early Redirects** — Redirect before WordPress fully loads
+3. **Custom Site Routing** — Override default subdomain/subdirectory logic
+4. **Performance** — Set caching/config before anything else loads
+5. **Security** — Block requests before WordPress processes them
+
+#### sunrise.php Examples
+
+**Basic Domain Mapping:**
+```php
+<?php
+// wp-content/sunrise.php
+global $wpdb;
+
+// Get the requested domain
+$domain = strtolower( $_SERVER['HTTP_HOST'] );
+
+// Look up mapped domain in custom table
+$mapped = $wpdb->get_row( $wpdb->prepare(
+    "SELECT blog_id, domain AS mapped_domain 
+     FROM {$wpdb->base_prefix}domain_mapping 
+     WHERE domain = %s AND active = 1",
+    $domain
+) );
+
+if ( $mapped ) {
+    // Force WordPress to use this site
+    define( 'COOKIE_DOMAIN', $domain );
+    define( 'DOMAIN_CURRENT_SITE', $domain );
+    
+    // Store for later use
+    $GLOBALS['dm_mapped_blog_id'] = $mapped->blog_id;
+}
+```
+
+**Redirect Non-SSL to SSL:**
+```php
+<?php
+// wp-content/sunrise.php
+if ( empty( $_SERVER['HTTPS'] ) || $_SERVER['HTTPS'] === 'off' ) {
+    $redirect = 'https://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
+    header( 'HTTP/1.1 301 Moved Permanently' );
+    header( 'Location: ' . $redirect );
+    exit;
+}
+```
+
+**Block Specific Domains Early:**
+```php
+<?php
+// wp-content/sunrise.php
+$blocked_domains = array( 'spam-domain.com', 'blocked.example.com' );
+
+if ( in_array( $_SERVER['HTTP_HOST'], $blocked_domains, true ) ) {
+    header( 'HTTP/1.1 410 Gone' );
+    exit( 'This site is no longer available.' );
+}
+```
+
+**Set Global Cache Group for Multisite:**
+```php
+<?php
+// wp-content/sunrise.php
+// Must run before wp_cache_add_global_groups() is called
+global $wp_object_cache;
+
+if ( function_exists( 'wp_cache_add_global_groups' ) ) {
+    wp_cache_add_global_groups( array( 
+        'domain_mapping',
+        'global_posts',
+        'site_lookups' 
+    ) );
+}
+```
+
+**Language/Locale by Domain:**
+```php
+<?php
+// wp-content/sunrise.php
+$domain_locales = array(
+    'example.de' => 'de_DE',
+    'example.fr' => 'fr_FR',
+    'example.es' => 'es_ES',
+);
+
+$host = $_SERVER['HTTP_HOST'];
+if ( isset( $domain_locales[ $host ] ) ) {
+    define( 'WPLANG', $domain_locales[ $host ] );
+}
+```
+
+#### Creating a sunrise.php Drop-in
+
+1. Create the file at exactly `wp-content/sunrise.php`
+2. Add `define( 'SUNRISE', true );` to `wp-config.php` (before `ABSPATH`)
+3. Add your early-load logic to `sunrise.php`
+
+**File must:**
+- Be named exactly `sunrise.php`
+- Be in `wp-content/` (not a subdirectory)
+- Start with `<?php`
+- Not output anything (no echo/print before headers)
+
+#### Debugging sunrise.php
+
+Since sunrise.php runs before most debugging tools:
 
 ```php
 <?php
 // wp-content/sunrise.php
-// Custom domain mapping logic
-if ( 'custom-domain.com' === $_SERVER['HTTP_HOST'] ) {
-    define( 'COOKIE_DOMAIN', 'custom-domain.com' );
-}
+
+// Log to file (error_log still works)
+error_log( 'SUNRISE: ' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'] );
+
+// Or write to custom log
+file_put_contents( 
+    ABSPATH . 'wp-content/sunrise-debug.log',
+    date('Y-m-d H:i:s') . ' - ' . $_SERVER['HTTP_HOST'] . "\n",
+    FILE_APPEND 
+);
 ```
+
+#### Plugins That Use SUNRISE
+
+- **WordPress MU Domain Mapping** — Original domain mapping plugin
+- **Mercator** — Modern domain mapping by Human Made
+- **WP Multi Network** — Multiple networks support
+- **Cavalcade** — Job queue system (early hooks)
 
 ### NOBLOGREDIRECT
 
