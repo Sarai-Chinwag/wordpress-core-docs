@@ -14,28 +14,28 @@ Internal state management for the HTML processor during parsing.
 
 | Constant | Description |
 |----------|-------------|
-| `INSERTION_MODE_INITIAL` | Initial state for full parser |
-| `INSERTION_MODE_BEFORE_HTML` | Before HTML element |
-| `INSERTION_MODE_BEFORE_HEAD` | Before HEAD element |
-| `INSERTION_MODE_IN_HEAD` | Inside HEAD element |
-| `INSERTION_MODE_IN_HEAD_NOSCRIPT` | Inside NOSCRIPT in HEAD |
-| `INSERTION_MODE_AFTER_HEAD` | After HEAD, before BODY |
-| `INSERTION_MODE_IN_BODY` | Inside BODY (main mode) |
-| `INSERTION_MODE_IN_TABLE` | Inside TABLE element |
-| `INSERTION_MODE_IN_TABLE_TEXT` | Processing table text |
-| `INSERTION_MODE_IN_CAPTION` | Inside CAPTION element |
-| `INSERTION_MODE_IN_COLUMN_GROUP` | Inside COLGROUP element |
-| `INSERTION_MODE_IN_TABLE_BODY` | Inside TBODY/THEAD/TFOOT |
-| `INSERTION_MODE_IN_ROW` | Inside TR element |
-| `INSERTION_MODE_IN_CELL` | Inside TD/TH element |
-| `INSERTION_MODE_IN_SELECT` | Inside SELECT element |
-| `INSERTION_MODE_IN_SELECT_IN_TABLE` | SELECT inside TABLE |
-| `INSERTION_MODE_IN_TEMPLATE` | Inside TEMPLATE element |
-| `INSERTION_MODE_AFTER_BODY` | After BODY closes |
-| `INSERTION_MODE_IN_FRAMESET` | Inside FRAMESET element |
-| `INSERTION_MODE_AFTER_FRAMESET` | After FRAMESET closes |
-| `INSERTION_MODE_AFTER_AFTER_BODY` | Final state after body |
-| `INSERTION_MODE_AFTER_AFTER_FRAMESET` | Final state after frameset |
+| `INSERTION_MODE_INITIAL` | Initial state for full parser (@since 6.4.0) |
+| `INSERTION_MODE_BEFORE_HTML` | Before HTML element (@since 6.7.0) |
+| `INSERTION_MODE_BEFORE_HEAD` | Before HEAD element (@since 6.7.0) |
+| `INSERTION_MODE_IN_HEAD` | Inside HEAD element (@since 6.7.0) |
+| `INSERTION_MODE_IN_HEAD_NOSCRIPT` | Inside NOSCRIPT in HEAD (@since 6.7.0) |
+| `INSERTION_MODE_AFTER_HEAD` | After HEAD, before BODY (@since 6.7.0) |
+| `INSERTION_MODE_IN_BODY` | Inside BODY (main mode) (@since 6.4.0) |
+| `INSERTION_MODE_IN_TABLE` | Inside TABLE element (@since 6.7.0) |
+| `INSERTION_MODE_IN_TABLE_TEXT` | Processing table text (@since 6.7.0) |
+| `INSERTION_MODE_IN_CAPTION` | Inside CAPTION element (@since 6.7.0) |
+| `INSERTION_MODE_IN_COLUMN_GROUP` | Inside COLGROUP element (@since 6.7.0) |
+| `INSERTION_MODE_IN_TABLE_BODY` | Inside TBODY/THEAD/TFOOT (@since 6.7.0) |
+| `INSERTION_MODE_IN_ROW` | Inside TR element (@since 6.7.0) |
+| `INSERTION_MODE_IN_CELL` | Inside TD/TH element (@since 6.7.0) |
+| `INSERTION_MODE_IN_SELECT` | Inside SELECT element (@since 6.7.0) |
+| `INSERTION_MODE_IN_SELECT_IN_TABLE` | SELECT inside TABLE (@since 6.7.0) |
+| `INSERTION_MODE_IN_TEMPLATE` | Inside TEMPLATE element (@since 6.7.0) |
+| `INSERTION_MODE_AFTER_BODY` | After BODY closes (@since 6.7.0) |
+| `INSERTION_MODE_IN_FRAMESET` | Inside FRAMESET element (@since 6.7.0) |
+| `INSERTION_MODE_AFTER_FRAMESET` | After FRAMESET closes (@since 6.7.0) |
+| `INSERTION_MODE_AFTER_AFTER_BODY` | Final state after body (@since 6.7.0) |
+| `INSERTION_MODE_AFTER_AFTER_FRAMESET` | Final state after frameset (@since 6.7.0) |
 
 ---
 

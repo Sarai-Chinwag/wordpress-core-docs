@@ -16,7 +16,7 @@ Represents a token in the HTML document for tracking in parser stacks.
 public $bookmark_name = null;
 ```
 
-Type: `string|null`
+Type: `string` (source docblock declares `@var string`, though default value is `null`)
 
 Name of bookmark corresponding to this token's location in the input HTML. A `null` value indicates a marker or virtual node without a bookmark.
 
@@ -54,7 +54,8 @@ Whether the token has the self-closing flag (`/>`). This reports presence of the
 public $namespace = 'html';
 ```
 
-Type: `string`
+Type: `string`  
+**Since:** 6.7.0
 
 Indicates the element's namespace: `"html"`, `"svg"`, or `"math"`.
 
@@ -66,7 +67,8 @@ Indicates the element's namespace: `"html"`, `"svg"`, or `"math"`.
 public $integration_node_type = null;
 ```
 
-Type: `string|null`
+Type: `string|null`  
+**Since:** 6.7.0
 
 Indicates the type of integration point: `"math"`, `"html"`, or `null` if not an integration point.
 

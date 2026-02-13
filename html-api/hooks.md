@@ -1,6 +1,6 @@
 # Hooks
 
-The HTML API does not define any actions or filters.
+The HTML API does not define any actions or filters. (Verified: no `do_action` or `apply_filters` calls exist in any source file under `wp-includes/html-api/`.)
 
 **Source:** `wp-includes/html-api/`
 

@@ -135,25 +135,27 @@ if ( $processor->get_last_error() ) {
 
 ## Common Causes
 
-### Adoption Agency Algorithm
-
-Complex tag nesting that requires the adoption agency algorithm:
-
-```html
-<p><b>Bold <i>Both</b> Italic</i></p>
-```
+The following are verified causes found via `bail()` calls in the source:
 
 ### Foster Parenting
 
-Tables with improperly nested content:
+Tables with improperly nested content (verified: `'Foster parenting is not supported.'`):
 
 ```html
 <table><div>This content needs foster parenting</div></table>
 ```
 
-### Unsupported Elements
+### Adoption Agency Algorithm (partial)
 
-Some elements may trigger unsupported code paths in certain contexts.
+The adoption agency algorithm is partially implemented. It bails when looping is required or when "any other end tag" handling is needed (verified: `'Cannot run adoption agency when looping required.'`, `'Cannot run adoption agency when "any other end tag" is required.'`).
+
+### Active Formatting Element Reconstruction
+
+Bails when reconstruction requires advancing and rewinding (verified: `'Cannot reconstruct active formatting elements when advancing and rewinding is required.'`).
+
+### FORM Element Nesting
+
+Bails when closing a FORM would disrupt breadcrumb tracking (verified: `'Cannot close a FORM when other elements remain open...'`).
 
 ---
 

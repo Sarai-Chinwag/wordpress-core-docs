@@ -120,7 +120,7 @@ public function __construct( $name, $value_start, $value_length, $start, $length
 
 ```html
 <input type="checked" checked id="selector">
-                      ^-----^ length = 7
+                      ^-----^ length = 6
                       is_true = true
 ```
 

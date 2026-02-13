@@ -112,7 +112,7 @@ Tree operations:
 | `#text` | Text node content |
 | `#comment` | HTML comment |
 | `#doctype` | DOCTYPE declaration |
-| `#cdata-section` | CDATA section (in foreign content) |
+| `#cdata-section` | CDATA section (only in foreign content — SVG/MathML) |
 | `#funky-comment` | Invalid tag closer as comment |
 | `#presumptuous-tag` | Empty end tag `</>` |
 
@@ -145,7 +145,7 @@ Certain elements have special parsing rules:
 
 1. **Spec Compliance**: Implements HTML5 parsing specification
 2. **Safety First**: Aborts on unsupported markup rather than breaking documents
-3. **Garbage-in, Garbage-out**: Invalid inputs pass through unchanged
+3. **Garbage-in, Garbage-out**: The Tag Processor passes invalid inputs through unchanged; the HTML Processor will abort (bail) on unsupported or unrecognized markup rather than producing incorrect output
 4. **Minimal Diff**: Preserves original formatting where possible
 5. **No Tree Construction**: Tag Processor operates linearly
 6. **Memory Efficient**: Negligible memory overhead

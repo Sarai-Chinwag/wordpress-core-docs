@@ -35,7 +35,7 @@ Linear HTML scanner for finding and modifying HTML tags and their attributes.
 | `STATE_COMMENT` | Found a comment |
 | `STATE_DOCTYPE` | Found DOCTYPE declaration |
 | `STATE_PRESUMPTUOUS_TAG` | Found empty end tag `</>` |
-| `STATE_FUNKY_COMMENT` | Invalid closer became comment |
+| `STATE_FUNKY_COMMENT` | Invalid closer became comment (actual value: `'STATE_WP_FUNKY'`) |
 
 ### Comment Types
 

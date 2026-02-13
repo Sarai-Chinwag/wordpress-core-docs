@@ -144,7 +144,7 @@ public function has_element_in_list_item_scope( string $tag_name ): bool
 
 **Returns:** `true` if in list item scope.
 
-Additional terminators: OL, UL.
+Additional terminators beyond general scope: BUTTON, OL, UL.
 
 ---
 
@@ -446,7 +446,7 @@ public function __wakeup()
 | Scope Type | Terminating Elements |
 |------------|---------------------|
 | General | APPLET, CAPTION, HTML, TABLE, TD, TH, MARQUEE, OBJECT, TEMPLATE, MathML (mi, mo, mn, ms, mtext, annotation-xml), SVG (foreignObject, desc, title) |
-| List Item | General + OL, UL |
+| List Item | General + BUTTON, OL, UL |
 | Button | General + BUTTON |
 | Table | HTML, TABLE, TEMPLATE |
 | Select | Everything except OPTION, OPTGROUP |

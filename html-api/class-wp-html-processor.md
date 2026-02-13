@@ -18,8 +18,9 @@ Full HTML5 parser with tree construction, extending WP_HTML_Tag_Processor.
 
 | Constant | Value | Description |
 |----------|-------|-------------|
-| `PROCESS_NEXT_NODE` | — | Step to next node |
-| `PROCESS_CURRENT_NODE` | — | Reprocess current node |
+| `PROCESS_NEXT_NODE` | `'process-next-node'` | Step to next node |
+| `REPROCESS_CURRENT_NODE` | `'reprocess-current-node'` | Reprocess current node in newly-selected insertion mode (@since 6.4.0) |
+| `PROCESS_CURRENT_NODE` | `'process-current-node'` | Process current node without advancing the parser (@since 6.5.0) |
 
 ---
 
@@ -187,6 +188,7 @@ Runs one step of the tree construction algorithm.
 
 ```php
 public function step( $node_to_process = self::PROCESS_NEXT_NODE ): bool
+// Internally uses REPROCESS_CURRENT_NODE to re-dispatch tokens when switching insertion modes.
 ```
 
 | Parameter | Type | Description |
@@ -483,13 +485,15 @@ public function get_comment_type(): ?string
 
 ### serialize()
 
-Serializes the processed HTML.
+Serializes the processed HTML. This is defined natively on `WP_HTML_Processor` (not inherited).
 
 ```php
 public function serialize(): ?string
 ```
 
 **Returns:** Serialized HTML or `null` on failure.
+
+**Note:** `get_updated_html()` is inherited from `WP_HTML_Tag_Processor` and also works. `serialize()` is the processor-native method that processes the entire document.
 
 ---
 

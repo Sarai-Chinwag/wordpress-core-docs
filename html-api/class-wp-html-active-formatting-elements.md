@@ -76,7 +76,7 @@ public function push( WP_HTML_Token $token )
 |-----------|------|-------------|
 | `$token` | WP_HTML_Token | Token to add |
 
-Implements the "Noah's Ark clause" — if there are already three elements with the same tag name, namespace, and attributes after the last marker, the earliest one is removed before adding the new element.
+**Note:** The source contains a `@todo` to implement the "Noah's Ark clause" (limiting duplicate formatting elements to three of any given kind after the last marker). This is **not yet implemented** as of the current source — `push()` simply appends to the list without enforcing this limit.
 
 ---
 

@@ -137,7 +137,7 @@ public static function read_character_reference( $context, $text, $at = 0, &$mat
 | `$at` | int | Byte offset to start reading |
 | `&$match_byte_length` | int | Set to length of matched reference |
 
-**Returns:** Decoded character or `null` if no reference found.
+**Returns:** `string|false` — Decoded character or `false` if no reference found (per source docblock). **Note:** The source docblock declares the return type as `string|false`, though the actual implementation returns `null` in no-match cases. This is a known discrepancy in the source.
 
 **Example:**
 
