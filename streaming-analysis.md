@@ -450,3 +450,760 @@ This is what most AI plugins (e.g., AI Engine, Jeanie) actually do — they bypa
 **The fundamental architectural problem** is that WordPress's HTTP API was designed around a request-response model where the response is a completed string. Every layer — from the transport return value (concatenated string) through `Requests::parse_response()` (splits string) to `WP_HTTP_Requests_Response::to_array()` (body as string) — assumes the body is available in its entirety.
 
 **The most promising existing hook** is `request.progress` in both transports, which already fires per-chunk with raw data. With cURL's automatic decompression, this data is already usable. The missing piece is preventing accumulation and providing a clean API surface.
+
+---
+
+## Implementation Spec: Full Streaming API (Option C)
+
+### 1. Design Principle
+
+**Extend, don't invent.** WordPress already has `'stream' => true` with `'filename'` for streaming to files. This spec adds `'on_data'` as a peer to `'filename'` — same `'stream' => true` flag, new capability. When `'on_data'` is set, chunks go to the callback instead of (or in addition to) a file. When neither `'on_data'` nor `'filename'` is set, behavior is unchanged.
+
+The pattern mirrors the existing file-streaming path exactly:
+- **File streaming:** `'stream' => true, 'filename' => '/tmp/download.zip'` → chunks written to file
+- **Callback streaming:** `'stream' => true, 'on_data' => callable` → chunks passed to callback
+- **No streaming (default):** body accumulated in memory as today
+
+This feels native because it uses the same flag and the same transport code paths. No new public functions required — `wp_remote_post()` gains streaming powers through its existing `$args` array.
+
+### 2. Files to Modify (Call Chain Order)
+
+#### 2.1 `wp-includes/http.php` — Document `on_data` in Public API
+
+**No code changes needed.** The `wp_remote_*` functions are thin wrappers that pass `$args` through to `WP_Http::request()`. The new `'on_data'` arg is documented at the `WP_Http::request()` level.
+
+The existing functions (`wp_remote_get()`, `wp_remote_post()`, etc.) at lines 173–214 all delegate to `$http->request()` or `$http->get()`/`$http->post()` without filtering args — they pass through cleanly.
+
+#### 2.2 `wp-includes/class-wp-http.php` — `WP_Http::request()`
+
+**Current code** — defaults array (lines 195–232):
+
+```php
+$defaults = array(
+    'method'              => 'GET',
+    'timeout'             => apply_filters( 'http_request_timeout', 5, $url ),
+    // ...
+    'stream'              => false,     // line 230
+    'filename'            => null,      // line 231
+    'limit_response_size' => null,      // line 232
+);
+```
+
+**Change 1 — Add `on_data` default:**
+
+```diff
+  'stream'              => false,
+  'filename'            => null,
++ 'on_data'             => null,
+  'limit_response_size' => null,
+```
+
+**Current code** — options passed to Requests (lines 340–365):
+
+```php
+$options = array(
+    'timeout'   => $parsed_args['timeout'],
+    'useragent' => $parsed_args['user-agent'],
+    'blocking'  => $parsed_args['blocking'],
+    'hooks'     => new WP_HTTP_Requests_Hooks( $url, $parsed_args ),
+);
+// ...
+if ( $parsed_args['stream'] ) {
+    $options['filename'] = $parsed_args['filename'];   // line 356
+}
+```
+
+**Change 2 — Pass `on_data` through as `stream_callback`:**
+
+```diff
+  if ( $parsed_args['stream'] ) {
+      $options['filename'] = $parsed_args['filename'];
++     if ( is_callable( $parsed_args['on_data'] ) ) {
++         $options['stream_callback'] = $parsed_args['on_data'];
++     }
+  }
+```
+
+**Current code** — response handling (lines 415–422):
+
+```php
+$requests_response = WpOrg\Requests\Requests::request( $url, $headers, $data, $type, $options );
+// Convert the response into an array.
+$http_response = new WP_HTTP_Requests_Response( $requests_response, $parsed_args['filename'] );
+$response      = $http_response->to_array();
+// Add the original object to the array.
+$response['http_response'] = $http_response;
+```
+
+**Change 3 — When streaming via callback, body is empty (already consumed):**
+
+No change needed here. The body in the Response object will be empty because the transport skipped accumulation. `to_array()` will return `'body' => ''`, which is correct — the data was already delivered via callback. This matches the existing file-streaming behavior where `'body'` is also empty when `'filename'` is set.
+
+**Why:** The `WP_Http` layer is just plumbing. The real work happens in the transports. We pass `stream_callback` through `$options` and let the Requests library handle it.
+
+#### 2.3 `wp-includes/Requests/src/Requests.php` — Skip Body Accumulation
+
+**Current code** — `OPTION_DEFAULTS` (lines 103–121):
+
+```php
+const OPTION_DEFAULTS = [
+    'timeout'          => 10,
+    // ...
+    'filename'         => false,
+    // ...
+    'verifyname'       => true,
+];
+```
+
+**Change 1 — Add `stream_callback` default:**
+
+```diff
+  const OPTION_DEFAULTS = [
+      'timeout'          => 10,
+      // ...
+      'filename'         => false,
++     'stream_callback'  => false,
+      // ...
+      'verifyname'       => true,
+  ];
+```
+
+**Current code** — `parse_response()` (lines 723–810), body handling:
+
+```php
+// line 731
+$return->body = '';
+
+// lines 733-745
+if (!$options['filename']) {
+    $pos = strpos($headers, "\r\n\r\n");
+    if ($pos === false) {
+        throw new Exception('Missing header/body separator', 'requests.no_crlf_separator');
+    }
+    $headers = substr($return->raw, 0, $pos);
+    $body = substr($return->raw, $pos + 4);
+    if (!empty($body)) {
+        $return->body = $body;
+    }
+}
+```
+
+**Change 2 — When `stream_callback` was used, skip body parsing and decompression:**
+
+```diff
+  $return->body = '';
+
+- if (!$options['filename']) {
++ if (!$options['filename'] && !$options['stream_callback']) {
+      $pos = strpos($headers, "\r\n\r\n");
+      // ... existing body parsing ...
+  }
+```
+
+And later, for chunked decoding and decompression (lines 772–777):
+
+```php
+if (isset($return->headers['transfer-encoding'])) {
+    $return->body = self::decode_chunked($return->body);
+    unset($return->headers['transfer-encoding']);
+}
+
+if (isset($return->headers['content-encoding'])) {
+    $return->body = self::decompress($return->body);
+}
+```
+
+**Change 3 — Skip post-processing when body was streamed:**
+
+```diff
+- if (isset($return->headers['transfer-encoding'])) {
++ if (isset($return->headers['transfer-encoding']) && !$options['stream_callback']) {
+      $return->body = self::decode_chunked($return->body);
+      unset($return->headers['transfer-encoding']);
+  }
+
+- if (isset($return->headers['content-encoding'])) {
++ if (isset($return->headers['content-encoding']) && !$options['stream_callback']) {
+      $return->body = self::decompress($return->body);
+  }
+```
+
+**Why:** When `stream_callback` is active, the body was delivered chunk-by-chunk during transport. The `$headers` string from the transport contains only headers (no body appended), so trying to split on `\r\n\r\n` for body extraction is wrong. Decompression is unnecessary because cURL already decompresses via `CURLOPT_ENCODING` (set at Curl.php constructor line 104: `curl_setopt($this->handle, CURLOPT_ENCODING, '')`), and for fsockopen we'll handle it at the transport level.
+
+**Note on `$return->raw`:** When streaming, `$return->raw` will contain only headers. This is a minor semantic change but acceptable since the raw body was already consumed.
+
+#### 2.4 `wp-includes/Requests/src/Transport/Curl.php` — Core Streaming Change
+
+**Current code** — `stream_body()` (lines 533–559):
+
+```php
+public function stream_body($handle, $data) {
+    $this->hooks->dispatch('request.progress', [$data, $this->response_bytes, $this->response_byte_limit]);
+    $data_length = strlen($data);
+
+    // Are we limiting the response size?
+    if ($this->response_byte_limit) {
+        if ($this->response_bytes === $this->response_byte_limit) {
+            return $data_length;
+        }
+        if (($this->response_bytes + $data_length) > $this->response_byte_limit) {
+            $limited_length = ($this->response_byte_limit - $this->response_bytes);
+            $data           = substr($data, 0, $limited_length);
+        }
+    }
+
+    if ($this->stream_handle) {
+        fwrite($this->stream_handle, $data);
+    } else {
+        $this->response_data .= $data;    // line 554
+    }
+
+    $this->response_bytes += strlen($data);
+    return $data_length;
+}
+```
+
+**Change — Add `stream_callback` branch:**
+
+```diff
++ /**
++  * Stream callback for chunk-by-chunk delivery
++  *
++  * @var callable|false
++  */
++ private $stream_callback = false;
+
+  public function stream_body($handle, $data) {
+      $this->hooks->dispatch('request.progress', [$data, $this->response_bytes, $this->response_byte_limit]);
+      $data_length = strlen($data);
+
+      // Are we limiting the response size?
+      if ($this->response_byte_limit) {
+          if ($this->response_bytes === $this->response_byte_limit) {
+              return $data_length;
+          }
+          if (($this->response_bytes + $data_length) > $this->response_byte_limit) {
+              $limited_length = ($this->response_byte_limit - $this->response_bytes);
+              $data           = substr($data, 0, $limited_length);
+          }
+      }
+
+      if ($this->stream_handle) {
+          fwrite($this->stream_handle, $data);
++     } elseif ($this->stream_callback) {
++         // Deliver chunk to callback; do NOT accumulate in response_data.
++         // Return false from callback to abort the transfer.
++         $result = call_user_func($this->stream_callback, $data, $this->response_bytes, $this->response_byte_limit);
++         if ($result === false) {
++             return -1; // Tells cURL to abort the transfer (CURLE_WRITE_ERROR)
++         }
+      } else {
+          $this->response_data .= $data;
+      }
+
+      $this->response_bytes += strlen($data);
+      return $data_length;
+  }
+```
+
+**Change to `request()` method** — set `stream_callback` from options (before `curl_exec()`, around line 383):
+
+```diff
+  $this->response_byte_limit = false;
+  if ($options['max_bytes'] !== false) {
+      $this->response_byte_limit = $options['max_bytes'];
+  }
+
++ if (!empty($options['stream_callback']) && is_callable($options['stream_callback'])) {
++     $this->stream_callback = $options['stream_callback'];
++ } else {
++     $this->stream_callback = false;
++ }
+```
+
+**Change to `process_response()` method** (lines 475–506) — when streaming via callback, headers are already separated (cURL's `CURLOPT_HEADERFUNCTION` sends them to `stream_headers()`), so `$response` (which is `$this->response_data`) is empty:
+
+```diff
+  if ($options['filename'] !== false && $this->stream_handle) {
+      fclose($this->stream_handle);
+      $this->headers = trim($this->headers);
++ } elseif ($this->stream_callback) {
++     // Body was delivered via callback, not accumulated.
++     // $this->headers already contains only headers (from stream_headers()).
++     $this->headers = trim($this->headers);
+  } else {
+      $this->headers .= $response;
+  }
+```
+
+**Why `$this->headers .= $response` is wrong for streaming:** In the normal (non-streaming) path, `$this->headers` contains the HTTP headers (from `stream_headers()`) and `$response` is `$this->response_data` (the body). They get concatenated so `parse_response()` can split them. When streaming via callback, `$this->response_data` is empty, and we don't want to append an empty string. More importantly, we need `parse_response()` to know it shouldn't look for a body in the raw string.
+
+**Key insight about decompression:** cURL handles decompression automatically via `CURLOPT_ENCODING` set to `''` at constructor line 104. The data arriving in `stream_body()` is **already decompressed**. This is why the cURL transport is ideal for streaming — no post-processing needed.
+
+#### 2.5 `wp-includes/Requests/src/Transport/Fsockopen.php` — Read Loop Change
+
+**Current code** — read loop body accumulation (lines 313–337):
+
+```php
+while (!feof($socket)) {
+    $this->info = stream_get_meta_data($socket);
+    if ($this->info['timed_out']) {
+        throw new Exception('fsocket timed out', 'timeout');
+    }
+
+    $block = fread($socket, Requests::BUFFER_SIZE);
+    if (!$doingbody) {
+        $response .= $block;
+        if (strpos($response, "\r\n\r\n")) {
+            list($headers, $block) = explode("\r\n\r\n", $response, 2);
+            $doingbody             = true;
+        }
+    }
+
+    // Are we in body mode now?
+    if ($doingbody) {
+        $options['hooks']->dispatch('request.progress', [$block, $size, $this->max_bytes]);
+        $data_length = strlen($block);
+        if ($this->max_bytes) {
+            // ... byte limit checks ...
+        }
+
+        $size += strlen($block);
+        if ($download) {
+            fwrite($download, $block);
+        } else {
+            $body .= $block;    // line 335
+        }
+    }
+}
+```
+
+**Change — Add `stream_callback` branch in the read loop:**
+
+```diff
++ $stream_callback = (!empty($options['stream_callback']) && is_callable($options['stream_callback']))
++     ? $options['stream_callback']
++     : false;
+
+  while (!feof($socket)) {
+      // ... existing header/body split logic ...
+
+      if ($doingbody) {
+          $options['hooks']->dispatch('request.progress', [$block, $size, $this->max_bytes]);
+          // ... byte limit checks ...
+
+          $size += strlen($block);
+          if ($download) {
+              fwrite($download, $block);
++         } elseif ($stream_callback) {
++             $result = call_user_func($stream_callback, $block, $size, $this->max_bytes);
++             if ($result === false) {
++                 break; // Abort transfer
++             }
+          } else {
+              $body .= $block;
+          }
+      }
+  }
+```
+
+**Change to return value** — after loop (lines 339–346):
+
+```diff
+  $this->headers = $headers;
+
+  if ($download) {
+      fclose($download);
++ } elseif ($stream_callback) {
++     // Body was delivered via callback. Return headers only.
++     $this->headers .= "\r\n\r\n";
+  } else {
+      $this->headers .= "\r\n\r\n" . $body;
+  }
+```
+
+**Fsockopen decompression caveat:** Unlike cURL, fsockopen does NOT auto-decompress. Data arrives compressed. For SSE/LLM APIs this is not a problem because they almost never use content-encoding (SSE is text-based and the connection is long-lived). If compression is needed, a streaming inflate wrapper using `inflate_init()`/`inflate_add()` (PHP 7.0+) could be added, but this is out of scope for v1.
+
+#### 2.6 `wp-includes/Requests/src/Response.php` — Add `$body_streamed` Flag
+
+**Current code** (lines 32–34):
+
+```php
+public $body = '';
+```
+
+**Change — Add streamed flag:**
+
+```diff
+  public $body = '';
+
++ /**
++  * Whether the body was delivered via streaming callback.
++  * When true, $body is empty and was consumed chunk-by-chunk during transport.
++  *
++  * @var bool
++  */
++ public $body_streamed = false;
+```
+
+**Set in `Requests::parse_response()`** (alongside the `stream_callback` guard):
+
+```diff
++ if ($options['stream_callback']) {
++     $return->body_streamed = true;
++ }
+```
+
+**Why:** Allows downstream code to distinguish "body is empty because the response had no body" from "body is empty because it was streamed." `WP_HTTP_Requests_Response::to_array()` can optionally expose this.
+
+### 3. SSE Parser Class — `WP_SSE_Parser`
+
+A standalone parser for Server-Sent Events that works with chunked data (chunks may split across SSE event boundaries).
+
+```php
+/**
+ * Server-Sent Events parser for streaming HTTP responses.
+ *
+ * Handles chunked data where SSE events may span multiple chunks.
+ * Designed as the `on_data` callback for wp_remote_post() streaming.
+ *
+ * @since 6.x.0
+ */
+class WP_SSE_Parser {
+
+    /** @var string Buffer for incomplete events */
+    private $buffer = '';
+
+    /** @var callable Callback receiving parsed events: function( WP_SSE_Event $event ) */
+    private $event_callback;
+
+    /** @var string Default event type per SSE spec */
+    private $last_event_type = 'message';
+
+    /** @var string Last event ID for reconnection */
+    private $last_event_id = '';
+
+    /**
+     * @param callable $event_callback Called for each complete SSE event.
+     *                                 Receives a WP_SSE_Event object.
+     */
+    public function __construct( callable $event_callback ) {
+        $this->event_callback = $event_callback;
+    }
+
+    /**
+     * Feed a chunk of data from the HTTP stream.
+     *
+     * Intended as the `on_data` callback:
+     *   'on_data' => [ $parser, 'feed' ]
+     *
+     * @param string   $chunk      Raw chunk from the transport.
+     * @param int      $bytes_so_far Total bytes received.
+     * @param int|bool $max_bytes  Byte limit or false.
+     * @return bool|void Return false to abort the stream.
+     */
+    public function feed( string $chunk, int $bytes_so_far, $max_bytes ) {
+        $this->buffer .= $chunk;
+
+        // SSE events are separated by blank lines (\n\n).
+        while ( ( $pos = strpos( $this->buffer, "\n\n" ) ) !== false ) {
+            $raw_event    = substr( $this->buffer, 0, $pos );
+            $this->buffer = substr( $this->buffer, $pos + 2 );
+
+            $event = $this->parse_event( $raw_event );
+            if ( $event !== null ) {
+                $result = call_user_func( $this->event_callback, $event );
+                if ( $result === false ) {
+                    return false; // Abort stream
+                }
+            }
+        }
+    }
+
+    /**
+     * Parse a single raw SSE event block into a WP_SSE_Event.
+     *
+     * @param string $raw_event Raw event text (lines separated by \n).
+     * @return WP_SSE_Event|null Null for comment-only blocks.
+     */
+    private function parse_event( string $raw_event ): ?WP_SSE_Event {
+        $lines = explode( "\n", $raw_event );
+        $data  = [];
+        $event = $this->last_event_type;
+        $id    = $this->last_event_id;
+
+        foreach ( $lines as $line ) {
+            if ( $line === '' || $line[0] === ':' ) {
+                continue; // Comment or empty
+            }
+
+            $colon = strpos( $line, ':' );
+            if ( $colon === false ) {
+                $field = $line;
+                $value = '';
+            } else {
+                $field = substr( $line, 0, $colon );
+                $value = substr( $line, $colon + 1 );
+                if ( isset( $value[0] ) && $value[0] === ' ' ) {
+                    $value = substr( $value, 1 );
+                }
+            }
+
+            switch ( $field ) {
+                case 'data':
+                    $data[] = $value;
+                    break;
+                case 'event':
+                    $event = $value;
+                    break;
+                case 'id':
+                    if ( strpos( $value, "\0" ) === false ) {
+                        $id                  = $value;
+                        $this->last_event_id = $value;
+                    }
+                    break;
+                case 'retry':
+                    // Ignored for now — no reconnection logic in a callback-based parser.
+                    break;
+            }
+        }
+
+        if ( empty( $data ) ) {
+            return null;
+        }
+
+        $this->last_event_type = 'message'; // Reset per SSE spec.
+
+        return new WP_SSE_Event(
+            implode( "\n", $data ),
+            $event,
+            $id
+        );
+    }
+
+    /**
+     * Get the last event ID (for reconnection).
+     *
+     * @return string
+     */
+    public function get_last_event_id(): string {
+        return $this->last_event_id;
+    }
+}
+
+/**
+ * Represents a single Server-Sent Event.
+ *
+ * @since 6.x.0
+ */
+class WP_SSE_Event {
+    /** @var string Event data (may contain newlines) */
+    public $data;
+
+    /** @var string Event type (default: 'message') */
+    public $type;
+
+    /** @var string Event ID */
+    public $id;
+
+    public function __construct( string $data, string $type = 'message', string $id = '' ) {
+        $this->data = $data;
+        $this->type = $type;
+        $this->id   = $id;
+    }
+
+    /**
+     * Decode event data as JSON.
+     *
+     * @param bool $assoc Return associative array. Default true.
+     * @return mixed Decoded data.
+     * @throws \JsonException On invalid JSON (PHP 7.3+).
+     */
+    public function json( bool $assoc = true ) {
+        return json_decode( $this->data, $assoc, 512, JSON_THROW_ON_ERROR );
+    }
+}
+```
+
+**File location:** `wp-includes/class-wp-sse-parser.php` (loaded conditionally or autoloaded).
+
+### 4. Usage Examples
+
+#### 4.1 Basic Chunk Callback
+
+```php
+$collected = '';
+
+$response = wp_remote_post( 'https://api.example.com/generate', array(
+    'headers' => array( 'Authorization' => 'Bearer sk-...' ),
+    'body'    => wp_json_encode( array( 'prompt' => 'Hello' ) ),
+    'timeout' => 120,
+    'stream'  => true,
+    'on_data' => function( $chunk, $bytes_so_far, $max_bytes ) use ( &$collected ) {
+        $collected .= $chunk;
+        // Process each chunk as it arrives
+        error_log( "Received chunk: " . strlen( $chunk ) . " bytes" );
+    },
+) );
+
+// $response['body'] is '' — data was delivered via callback
+// $response['response']['code'] is still 200, headers are available
+$status = wp_remote_retrieve_response_code( $response );
+```
+
+#### 4.2 SSE from an LLM API
+
+```php
+$tokens = [];
+$parser = new WP_SSE_Parser( function( WP_SSE_Event $event ) use ( &$tokens ) {
+    if ( $event->data === '[DONE]' ) {
+        return; // Stream complete
+    }
+
+    $payload = $event->json();
+    $token   = $payload['choices'][0]['delta']['content'] ?? '';
+    if ( $token !== '' ) {
+        $tokens[] = $token;
+        // Could echo + flush for real-time output
+    }
+} );
+
+$response = wp_remote_post( 'https://api.openai.com/v1/chat/completions', array(
+    'headers' => array(
+        'Authorization' => 'Bearer sk-...',
+        'Content-Type'  => 'application/json',
+    ),
+    'body'    => wp_json_encode( array(
+        'model'    => 'gpt-4',
+        'stream'   => true,
+        'messages' => array(
+            array( 'role' => 'user', 'content' => 'Say hello' ),
+        ),
+    ) ),
+    'timeout' => 120,
+    'stream'  => true,
+    'on_data' => array( $parser, 'feed' ),
+) );
+
+$full_response = implode( '', $tokens );
+```
+
+#### 4.3 File Streaming (Existing, Unchanged)
+
+```php
+// This behavior is 100% unchanged:
+$response = wp_remote_get( 'https://example.com/large-file.zip', array(
+    'stream'   => true,
+    'filename' => '/tmp/large-file.zip',
+) );
+
+// Body is empty, file is at /tmp/large-file.zip
+$filename = $response['filename'];
+```
+
+#### 4.4 Error Handling During Streaming
+
+```php
+$response = wp_remote_post( $url, array(
+    'timeout' => 120,
+    'stream'  => true,
+    'on_data' => function( $chunk, $bytes, $limit ) {
+        // Return false to abort the transfer
+        if ( strlen( $chunk ) > 1048576 ) {
+            error_log( 'Chunk too large, aborting' );
+            return false;
+        }
+
+        // Exceptions in the callback will propagate up through curl_exec()
+        // and be caught by WP_Http::request()'s try/catch as a WP_Error.
+        process_chunk( $chunk );
+    },
+) );
+
+if ( is_wp_error( $response ) ) {
+    // cURL will report CURLE_WRITE_ERROR if callback returned false
+    // Or the exception message if one was thrown
+    $error = $response->get_error_message();
+}
+
+// HTTP errors (4xx/5xx) are still detectable via status code:
+$code = wp_remote_retrieve_response_code( $response );
+if ( $code >= 400 ) {
+    // Note: with streaming, the error body was already delivered to the callback.
+    // The callback should handle non-200 responses itself.
+}
+```
+
+### 5. Backward Compatibility
+
+This implementation is **fully backward-compatible**:
+
+1. **New optional args with safe defaults:** `'on_data' => null` (WP_Http) and `'stream_callback' => false` (Requests) default to their inactive states. Existing code never sets these, so behavior is unchanged.
+
+2. **`'stream' => true` still required:** The `on_data` callback is only wired up when `'stream' => true` is set (line 356 guard in `class-wp-http.php`). Without it, `on_data` is ignored — no accidental streaming.
+
+3. **Existing `'filename'` path untouched:** The file-streaming path (`$this->stream_handle` in Curl, `$download` in Fsockopen) remains the first branch checked. `stream_callback` is an `elseif` — it only activates when no file handle is open.
+
+4. **Response array structure unchanged:** `to_array()` still returns `headers`, `body`, `response`, `cookies`, `filename`. The `body` key is an empty string when streaming (same as file streaming today). The new `body_streamed` flag on `Response` is additive.
+
+5. **No removed hooks or filters:** All existing hooks (`request.progress`, `http_request_args`, `pre_http_request`, `http_response`, etc.) continue to fire at the same points. The `request.progress` hook still fires even when `stream_callback` is set (it fires first, at the top of `stream_body()`).
+
+6. **`OPTION_DEFAULTS` is a const:** Adding a key to this array in the Requests library is additive and doesn't affect existing consumers who iterate over it.
+
+7. **Return `-1` from cURL write callback:** This is the documented way to abort a cURL transfer. It triggers `CURLE_WRITE_ERROR`, which is already handled in `Curl::request()` at lines 397–404 (the retry-with-no-encoding block). The retry will also get `-1` if the callback still returns false, so the error will propagate correctly.
+
+### 6. Test Plan
+
+#### Unit Tests
+
+| Test | Description |
+|------|-------------|
+| `test_stream_callback_receives_chunks` | POST to httpbin.org/post, verify callback is called with non-empty chunks |
+| `test_stream_callback_body_empty` | Verify `$response['body']` is `''` when `on_data` is used |
+| `test_stream_callback_headers_available` | Verify headers and status code are correct in response |
+| `test_stream_callback_abort` | Return `false` from callback, verify transfer stops (cURL: `CURLE_WRITE_ERROR`) |
+| `test_stream_callback_not_called_without_stream_flag` | Set `on_data` without `stream => true`, verify callback is NOT invoked |
+| `test_file_streaming_unchanged` | Existing `stream + filename` test still passes |
+| `test_stream_callback_with_max_bytes` | Verify byte limiting still works with callbacks |
+| `test_stream_callback_with_redirects` | Verify callbacks handle 301/302 redirects correctly |
+| `test_body_streamed_flag` | Verify `Response::$body_streamed` is `true` when callback used, `false` otherwise |
+| `test_on_data_ignored_when_not_callable` | Pass non-callable `on_data`, verify no error and normal behavior |
+
+#### SSE Parser Tests
+
+| Test | Description |
+|------|-------------|
+| `test_sse_single_event` | Feed `"data: hello\n\n"`, verify event with data `"hello"` |
+| `test_sse_multi_line_data` | Feed `"data: line1\ndata: line2\n\n"`, verify data is `"line1\nline2"` |
+| `test_sse_split_across_chunks` | Feed `"data: hel"` then `"lo\n\n"`, verify single event |
+| `test_sse_event_type` | Feed `"event: custom\ndata: x\n\n"`, verify `$event->type === 'custom'` |
+| `test_sse_event_id` | Feed `"id: 42\ndata: x\n\n"`, verify `$event->id === '42'` |
+| `test_sse_comments_ignored` | Feed `": comment\ndata: x\n\n"`, verify data is `"x"` |
+| `test_sse_json_decode` | Feed `"data: {\"key\":\"val\"}\n\n"`, verify `$event->json()` works |
+| `test_sse_done_signal` | Feed `"data: [DONE]\n\n"`, verify event with data `"[DONE]"` |
+| `test_sse_abort_from_callback` | Return `false` from event callback, verify `feed()` returns `false` |
+
+#### Integration Tests
+
+| Test | Description |
+|------|-------------|
+| `test_curl_transport_streaming` | Force cURL transport, verify chunk delivery |
+| `test_fsockopen_transport_streaming` | Force fsockopen transport, verify chunk delivery |
+| `test_sse_with_real_endpoint` | Stream from a local SSE test server, verify complete event parsing |
+| `test_streaming_timeout` | Verify `timeout` is respected during streaming (default 5s is too low for SSE — tests should set 120s) |
+| `test_streaming_ssl` | Verify SSL verification still works during streaming |
+
+### 7. Estimated Scope
+
+| Layer | File | Lines Changed | Lines Added |
+|-------|------|---------------|-------------|
+| WP Core | `class-wp-http.php` | 2 | 5 |
+| Requests | `Requests.php` | 4 | 8 |
+| Requests | `Transport/Curl.php` | 3 | 18 |
+| Requests | `Transport/Fsockopen.php` | 2 | 12 |
+| Requests | `Response.php` | 0 | 8 |
+| WP Core | `class-wp-sse-parser.php` (new) | 0 | ~150 |
+| WP Core | `http.php` | 0 | 0 |
+| **Total** | | **~11** | **~201** |
+
+The core streaming mechanism is ~50 lines across 4 files. The SSE parser is the bulk of new code at ~150 lines. This is a small, surgical change that unlocks a major capability.
