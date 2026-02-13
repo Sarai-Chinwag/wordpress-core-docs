@@ -1207,3 +1207,310 @@ This implementation is **fully backward-compatible**:
 | **Total** | | **~11** | **~201** |
 
 The core streaming mechanism is ~50 lines across 4 files. The SSE parser is the bulk of new code at ~150 lines. This is a small, surgical change that unlocks a major capability.
+
+---
+
+## REST API Outbound Streaming — Serving SSE Responses
+
+The previous sections analyze **inbound** streaming (WordPress calling an LLM API and receiving chunks). This section analyzes the **outbound** side: how `WP_REST_Server` serves responses to clients, and what would need to change to support streaming/SSE responses from REST API endpoints.
+
+### How `WP_REST_Server::serve_request()` Currently Works
+
+**Source:** `wp-includes/rest-api/class-wp-rest-server.php`, `serve_request()` method starting at line 285.
+
+The response pipeline is fundamentally **batch-oriented** — the entire response is assembled in memory, JSON-encoded, and echoed in a single operation:
+
+```
+serve_request($path)
+  ├─ Build WP_REST_Request from $_GET, $_POST, $_FILES, headers, body
+  ├─ $result = $this->check_authentication()
+  ├─ $result = $this->dispatch($request)                    // Route to handler
+  ├─ $result = rest_ensure_response($result)                // Normalize to WP_REST_Response
+  ├─ apply_filters('rest_post_dispatch', $result, ...)       // Post-dispatch filter
+  ├─ Optional: $this->envelope_response($result, $embed)    // ?_envelope wrapping
+  ├─ $this->send_headers($result->get_headers())            // Send all headers
+  ├─ $this->set_status($code)                               // Send status code
+  ├─ apply_filters('rest_pre_serve_request', false, ...)     // Short-circuit hook
+  │
+  └─ If not served:
+       ├─ $result = $this->response_to_data($result, $embed)  // Convert to array + embed links
+       ├─ apply_filters('rest_pre_echo_response', $result, ...)
+       ├─ $result = wp_json_encode($result, $options)          // JSON-encode entire response
+       └─ echo $result                                          // Single echo of complete JSON
+```
+
+### Specific Bottlenecks for SSE/Streaming
+
+**1. `WP_REST_Response` is a complete data container (line 442-458)**
+
+`rest_ensure_response()` converts everything to `WP_REST_Response`, which extends `WP_HTTP_Response`. The response data is a single value (`->data`) — typically an array or object. There's no concept of incremental data.
+
+**2. `response_to_data()` materializes the full response (line ~540)**
+
+Called at line 540 in `serve_request()`: `$result = $this->response_to_data( $result, $embed )`. This method (defined at line 579) recursively processes the response data, embeds linked resources (`_embedded`), and returns a plain array. This is a synchronous, all-at-once operation.
+
+**3. `wp_json_encode()` requires the complete data (line 545)**
+
+```php
+$result = wp_json_encode( $result, $this->get_json_encode_options( $request ) );
+```
+
+JSON encoding requires the entire data structure. You can't incrementally JSON-encode a partially-available array.
+
+**4. Single `echo` output (line 564-566)**
+
+```php
+if ( $jsonp_callback ) {
+    echo '/**/' . $jsonp_callback . '(' . $result . ')';
+} else {
+    echo $result;
+}
+```
+
+One `echo` call with the complete JSON string. No flushing, no chunked output.
+
+**5. Content-Type is hardcoded to JSON (line 318)**
+
+```php
+$content_type = ( $jsonp_callback && $jsonp_enabled ) ? 'application/javascript' : 'application/json';
+$this->send_header( 'Content-Type', $content_type . '; charset=' . get_option( 'blog_charset' ) );
+```
+
+SSE requires `Content-Type: text/event-stream`. This header is sent **before** routing, so by the time a streaming endpoint's handler runs, the wrong Content-Type is already sent.
+
+**6. No output buffering control**
+
+PHP's output buffering and web server buffering (nginx's `proxy_buffering`, Apache's `mod_deflate`) are not addressed. SSE requires disabling all buffering layers.
+
+### The `rest_pre_serve_request` Escape Hatch
+
+**This filter (line 511-519) is the most viable insertion point today:**
+
+```php
+$served = apply_filters( 'rest_pre_serve_request', false, $result, $request, $this );
+
+if ( ! $served ) {
+    // ... normal JSON echo path ...
+}
+```
+
+If a filter returns `true`, the normal response path is skipped entirely. A streaming endpoint could:
+
+1. Register a `rest_pre_serve_request` filter
+2. Check if the current route is a streaming endpoint
+3. Override headers (Content-Type to `text/event-stream`)
+4. Manage its own output loop
+5. Return `true` to prevent the default JSON echo
+
+**Problem:** The `$result` parameter is already a fully-materialized `WP_REST_Response` at this point. The dispatch has completed. For true streaming, the endpoint handler itself needs to stream — but `dispatch()` expects a return value (`WP_REST_Response`).
+
+### What Would Need to Change
+
+#### Approach A: Plugin-Level SSE (Works Today, No Core Changes)
+
+Use `rest_pre_serve_request` as an escape hatch. The endpoint handler does its own streaming:
+
+```php
+register_rest_route( 'myplugin/v1', '/stream', [
+    'methods'  => 'POST',
+    'callback' => function( WP_REST_Request $request ) {
+        // Return a marker response — actual streaming happens in the filter
+        $response = new WP_REST_Response( null, 200 );
+        $response->header( 'X-Stream-Endpoint', 'true' );
+        return $response;
+    },
+    'permission_callback' => function() { return current_user_can( 'edit_posts' ); },
+] );
+
+add_filter( 'rest_pre_serve_request', function( $served, $result, $request, $server ) {
+    if ( $request->get_route() !== '/myplugin/v1/stream' ) {
+        return $served;
+    }
+
+    // Override headers
+    header( 'Content-Type: text/event-stream' );
+    header( 'Cache-Control: no-cache' );
+    header( 'X-Accel-Buffering: no' );  // Disable nginx buffering
+
+    // Disable PHP output buffering
+    while ( ob_get_level() ) {
+        ob_end_clean();
+    }
+
+    // Stream SSE events
+    $body = json_decode( $request->get_body(), true );
+
+    // Example: proxy an LLM streaming call
+    $ch = curl_init( 'https://api.openai.com/v1/chat/completions' );
+    curl_setopt_array( $ch, [
+        CURLOPT_POST          => true,
+        CURLOPT_POSTFIELDS    => json_encode( $body ),
+        CURLOPT_HTTPHEADER    => [ 'Authorization: Bearer ' . OPENAI_KEY, 'Content-Type: application/json' ],
+        CURLOPT_WRITEFUNCTION => function( $ch, $data ) {
+            echo $data;
+            flush();
+            return strlen( $data );
+        },
+        CURLOPT_TIMEOUT       => 120,
+    ] );
+    curl_exec( $ch );
+    curl_close( $ch );
+
+    return true; // Prevent default JSON output
+}, 10, 4 );
+```
+
+**Limitations:**
+- Bypasses WordPress HTTP API (no proxy support, no `pre_http_request` filter)
+- Content-Type header already sent as `application/json` at line 318 — must re-send (works in practice because `header()` replaces previous same-name headers)
+- No integration with `WP_REST_Response` — can't use standard response helpers
+- Authentication works (runs before dispatch) but permission callbacks need careful handling
+
+#### Approach B: First-Class SSE Support in WP_REST_Server
+
+**Required changes to `serve_request()`:**
+
+**1. Defer Content-Type header (line 318)**
+
+Move the Content-Type header to after dispatch, so streaming endpoints can set their own:
+
+```diff
+- $content_type = ( $jsonp_callback && $jsonp_enabled ) ? 'application/javascript' : 'application/json';
+- $this->send_header( 'Content-Type', $content_type . '; charset=' . get_option( 'blog_charset' ) );
++ // Content-Type deferred until after dispatch to allow streaming endpoints to override
+```
+
+Then after dispatch, before sending headers:
+
+```php
+if ( ! $result->get_headers()['Content-Type'] ) {
+    $content_type = ( $jsonp_callback && $jsonp_enabled ) ? 'application/javascript' : 'application/json';
+    $result->header( 'Content-Type', $content_type . '; charset=' . get_option( 'blog_charset' ) );
+}
+```
+
+**2. New `WP_REST_Streaming_Response` class**
+
+```php
+class WP_REST_Streaming_Response extends WP_REST_Response {
+    /** @var callable Generator function that yields SSE events */
+    private $stream_callback;
+
+    public function __construct( callable $stream_callback, int $status = 200 ) {
+        parent::__construct( null, $status );
+        $this->stream_callback = $stream_callback;
+        $this->header( 'Content-Type', 'text/event-stream' );
+        $this->header( 'Cache-Control', 'no-cache' );
+        $this->header( 'X-Accel-Buffering', 'no' );
+    }
+
+    public function get_stream_callback(): callable {
+        return $this->stream_callback;
+    }
+}
+```
+
+**3. Handle streaming responses in `serve_request()` (after line 489)**
+
+After headers are sent and before the `rest_pre_serve_request` filter:
+
+```php
+if ( $result instanceof WP_REST_Streaming_Response ) {
+    // Disable output buffering
+    while ( ob_get_level() ) {
+        ob_end_clean();
+    }
+
+    // Execute the streaming callback
+    $callback = $result->get_stream_callback();
+    $callback( $request );
+
+    return null;
+}
+```
+
+**4. Endpoint registration example:**
+
+```php
+register_rest_route( 'myplugin/v1', '/chat', [
+    'methods'  => 'POST',
+    'callback' => function( WP_REST_Request $request ) {
+        return new WP_REST_Streaming_Response( function( $request ) {
+            $parser = new WP_SSE_Parser( function( WP_SSE_Event $event ) {
+                // Re-emit to client
+                echo "data: " . $event->data . "\n\n";
+                flush();
+            } );
+
+            wp_remote_post( 'https://api.openai.com/v1/chat/completions', [
+                'headers' => [ 'Authorization' => 'Bearer ' . OPENAI_KEY ],
+                'body'    => wp_json_encode( $request->get_json_params() ),
+                'timeout' => 120,
+                'stream'  => true,
+                'on_data' => [ $parser, 'feed' ],
+            ] );
+
+            echo "data: [DONE]\n\n";
+            flush();
+        } );
+    },
+    'permission_callback' => function() { return current_user_can( 'edit_posts' ); },
+] );
+```
+
+### Integration: Both Halves Together
+
+The complete streaming picture connects the two halves:
+
+```
+Client (browser)                    WordPress                         LLM API
+     │                                  │                                │
+     │  POST /wp-json/plugin/v1/chat    │                                │
+     │ ──────────────────────────────►   │                                │
+     │                                  │  POST /v1/chat/completions     │
+     │                                  │  stream: true, on_data: cb     │
+     │                                  │ ──────────────────────────────► │
+     │                                  │                                │
+     │                                  │  ◄── data: {"token": "Hel"}    │
+     │  ◄── data: {"token": "Hel"}      │      (via stream_callback)     │
+     │      (SSE event)                 │                                │
+     │                                  │  ◄── data: {"token": "lo"}     │
+     │  ◄── data: {"token": "lo"}       │                                │
+     │                                  │                                │
+     │                                  │  ◄── data: [DONE]              │
+     │  ◄── data: [DONE]               │                                │
+     │                                  │                                │
+```
+
+**Inbound streaming** (§ Option C above): `wp_remote_post()` with `'stream' => true, 'on_data' => callable` delivers LLM response chunks to a callback via the `stream_callback` option in the Requests transports.
+
+**Outbound streaming** (this section): `WP_REST_Streaming_Response` bypasses the JSON encode + single echo path, instead executing a callback that can `echo` + `flush()` SSE events incrementally.
+
+**The `on_data` callback bridges the two:** It receives chunks from the inbound LLM stream and immediately echoes them as SSE events to the waiting client. WordPress becomes a streaming proxy with authentication, permission checking, and hook integration intact.
+
+### Buffering Considerations
+
+For SSE to work end-to-end, **all buffering layers** must be disabled:
+
+| Layer | Default | Required for SSE | How to Disable |
+|-------|---------|------------------|----------------|
+| PHP output buffering | Often enabled (`output_buffering = 4096`) | Off | `while (ob_get_level()) ob_end_clean()` |
+| PHP implicit flush | Off | On | `ini_set('implicit_flush', 1)` or `ob_implicit_flush(1)` |
+| nginx `proxy_buffering` | On | Off | `X-Accel-Buffering: no` header |
+| nginx `fastcgi_buffering` | On | Off | `X-Accel-Buffering: no` header |
+| Apache `mod_deflate` | Compresses text/* | Must exclude `text/event-stream` | `SetEnvIfNoCase Content-Type text/event-stream no-gzip` |
+| PHP `zlib.output_compression` | May be on | Off | `ini_set('zlib.output_compression', 0)` |
+
+The `WP_REST_Streaming_Response` class should handle PHP-level buffering automatically. Server-level buffering (nginx/Apache) requires the `X-Accel-Buffering: no` header, which is set by the response class.
+
+### Summary: REST API Streaming Feasibility
+
+| Approach | Core Changes | Works Today | SSE Quality |
+|----------|-------------|-------------|-------------|
+| `rest_pre_serve_request` filter hack | None | ✅ Yes | Mediocre — fights the framework |
+| `WP_REST_Streaming_Response` class | ~50 lines in `serve_request()` + new class | ❌ Needs core patch | Good — clean integration |
+| Combined with inbound `on_data` | Both HTTP API + REST Server changes | ❌ Needs core patches | Excellent — full pipeline |
+
+**The architectural barrier is the same as the HTTP API:** WordPress's REST server was designed around a request→response model where the response is a complete data structure. Every step — dispatch returning a value, `response_to_data()` materializing embedded resources, `wp_json_encode()` serializing the whole thing, single `echo` — assumes the response is finished before output begins.
+
+The `rest_pre_serve_request` filter is the pragmatic escape hatch. A `WP_REST_Streaming_Response` class would be the clean solution. Combined with the inbound `on_data` streaming option, WordPress could serve as a proper streaming proxy for LLM APIs — with authentication, permissions, and hooks intact.
