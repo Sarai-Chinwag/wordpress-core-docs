@@ -256,204 +256,25 @@ return array(
 
 ---
 
-## Proposed Insertion Points for Streaming Support
+## Native Streaming API
 
-### Option A: Zero Core Changes — Use `request.progress` Hook (Works TODAY)
+WordPress's HTTP API was designed around a request-response model where the response is a completed string. Every layer — from the transport return value (concatenated string) through `Requests::parse_response()` (splits string) to `WP_HTTP_Requests_Response::to_array()` (body as string) — assumes the body is available in its entirety.
 
-The `request.progress` hook in both Curl and Fsockopen transports already fires per-chunk during data reception. You can use it via `WP_HTTP_Requests_Hooks`:
+The solution is native streaming support — extending the existing `'stream' => true` pattern that already works for file downloads, so it also supports callback-based chunk processing. This is not a new subsystem; it completes one that was half-built.
 
-```php
-add_action('http_request_args', function($args, $url) {
-    if ($url === 'https://api.openai.com/v1/chat/completions') {
-        // Store a callback in the args to be picked up below
-        $args['_stream_callback'] = function($chunk) {
-            // Process SSE chunk
-            if (str_starts_with($chunk, 'data: ')) {
-                $json = json_decode(substr($chunk, 6));
-                // Handle token...
-            }
-        };
-    }
-    return $args;
-}, 10, 2);
+### Requirements
 
-add_action('requests-requests.before_request', function(&$url, &$headers, &$data, &$type, &$options) {
-    // This won't work — WP_HTTP_Requests_Hooks doesn't expose request.progress to WP hooks
-}, 10, 5);
-```
-
-**Problem:** `WP_HTTP_Requests_Hooks` (the WordPress wrapper for Requests hooks) maps Requests hook names to WordPress `do_action()` calls, but `request.progress` dispatches through the Requests `Hooks` object directly, NOT through WordPress's action system. You'd need to register directly on the `$options['hooks']` object.
-
-**Practical approach:**
-
-```php
-add_filter('http_request_args', function($args, $url) {
-    if (str_contains($url, 'api.openai.com')) {
-        $args['_streaming_callback'] = function($data, $bytes, $limit) {
-            // Process chunk
-            echo $data;
-            flush();
-        };
-    }
-    return $args;
-}, 10, 2);
-
-// In a custom class or mu-plugin that can intercept the hooks object:
-add_filter('pre_http_request', function($pre, $args, $url) {
-    if (empty($args['_streaming_callback'])) return $pre;
-    
-    $callback = $args['_streaming_callback'];
-    
-    // Build a custom Requests call with our hook registered
-    $options = [/* ... build from $args ... */];
-    $hooks = new WP_HTTP_Requests_Hooks($url, $args);
-    $hooks->register('request.progress', $callback);
-    $options['hooks'] = $hooks;
-    
-    $response = WpOrg\Requests\Requests::request($url, $args['headers'] ?? [], $args['body'], $args['method'], $options);
-    // Convert to WP format...
-    $http_response = new WP_HTTP_Requests_Response($response);
-    return $http_response->to_array();
-}, 10, 3);
-```
-
-**Limitations of Option A:**
-- Body is still fully accumulated in memory (both in transport AND in Response object)
-- You get the chunks AND the full body at the end — double memory usage
-- For SSE, the connection stays open until timeout or server close — the WP timeout default of 5 seconds will kill most SSE streams
-- Decompression may interfere (though cURL with `CURLOPT_ENCODING` handles this)
-
-### Option B: Minimal Transport-Level Change
-
-Add a `'stream_callback'` option recognized by both transports:
-
-**In `Curl::stream_body()`:**
-```php
-public function stream_body($handle, $data) {
-    $this->hooks->dispatch('request.progress', [$data, $this->response_bytes, $this->response_byte_limit]);
-    
-    // NEW: If a stream callback is set, call it and optionally skip accumulation
-    if ($this->stream_callback) {
-        call_user_func($this->stream_callback, $data);
-        if ($this->stream_callback_only) {
-            $this->response_bytes += strlen($data);
-            return strlen($data);  // Don't accumulate
-        }
-    }
-    
-    // ... existing code ...
-}
-```
-
-**In `Fsockopen::request()` read loop:** Same pattern.
-
-**In `Requests::parse_response()`:** If streaming was used, skip body processing (chunked decode, decompress) since chunks were already processed.
-
-**Estimated changes:** ~30 lines across 3 files in Requests library, ~10 lines in `WP_Http::request()`, ~5 lines in new public API function.
-
-### Option C: Full Streaming API (Ideal for AI/LLM Use Cases)
-
-```php
-// New public API
-$stream = wp_remote_post_stream('https://api.openai.com/v1/chat/completions', [
-    'headers' => ['Authorization' => 'Bearer ...', 'Content-Type' => 'application/json'],
-    'body'    => json_encode(['model' => 'gpt-4', 'stream' => true, 'messages' => [...]]),
-    'timeout' => 120,  // SSE needs long timeouts
-]);
-
-// Generator-based consumption
-foreach ($stream as $event) {
-    // $event = parsed SSE event object
-    if ($event->data === '[DONE]') break;
-    $token = json_decode($event->data);
-    echo $token->choices[0]->delta->content ?? '';
-}
-
-// Or callback-based
-wp_remote_post_stream('https://api.openai.com/v1/chat/completions', [
-    'body'      => json_encode([...]),
-    'timeout'   => 120,
-    'on_data'   => function(string $chunk, array $headers, int $status_code) {
-        // Raw chunk processing
-    },
-    'on_event'  => function(object $sse_event) {
-        // Parsed SSE event
-    },
-]);
-```
-
-**Required changes for Option C:**
-
-| Layer | File | Changes | Complexity |
-|-------|------|---------|------------|
-| Transport | `Transport/Curl.php` | Add `stream_callback` support in `stream_body()`, skip accumulation | Low |
-| Transport | `Transport/Fsockopen.php` | Add `stream_callback` in read loop, skip accumulation | Low |
-| Library | `Requests.php` | New `request_streaming()` method or option flag, skip `parse_response()` body processing | Medium |
-| Library | `Response.php` | Add `$body_streamed = true` flag to skip body expectations | Low |
-| WP Core | `class-wp-http.php` | New `stream_request()` method, handle streaming args, don't call `to_array()` for body | Medium |
-| WP Core | `http.php` | New `wp_remote_post_stream()` / `wp_remote_get_stream()` functions | Low |
-| WP Core | New file | SSE parser class, streaming response wrapper | Medium |
-| Total | | ~200-400 lines of new/changed code | **Medium** |
-
----
-
-## What a Streaming API Needs for AI/LLM Use Cases
-
-### SSE (Server-Sent Events) Requirements:
 1. **Long timeouts** — SSE streams can last minutes. Default 5s timeout is a non-starter.
 2. **Chunked processing** — Each `data: {...}\n\n` event must be processable independently.
 3. **No body accumulation** — LLM responses can be large; accumulating defeats the purpose.
 4. **Decompression in-flight** — cURL already does this with `CURLOPT_ENCODING`. fsockopen would need `inflate_init()`/`inflate_add()` (PHP 7.0+).
 5. **SSE protocol parsing** — Split on `\n\n`, parse `event:`, `data:`, `id:`, `retry:` fields.
 6. **Early termination** — Ability to abort the stream (return -1 from cURL write callback, or close socket).
-
-### Immediate Workaround (No Core Changes)
-
-For plugins that need SSE streaming today, bypass `wp_remote_*` entirely:
-
-```php
-function wp_streaming_request($url, $args, $on_data) {
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_POST           => true,
-        CURLOPT_POSTFIELDS     => $args['body'],
-        CURLOPT_HTTPHEADER     => $args['headers'],
-        CURLOPT_WRITEFUNCTION  => function($ch, $data) use ($on_data) {
-            $on_data($data);
-            return strlen($data);
-        },
-        CURLOPT_TIMEOUT        => $args['timeout'] ?? 120,
-        CURLOPT_SSL_VERIFYPEER => true,
-        CURLOPT_CAINFO         => ABSPATH . WPINC . '/certificates/ca-bundle.crt',
-    ]);
-    curl_exec($ch);
-    $error = curl_error($ch);
-    curl_close($ch);
-    if ($error) return new WP_Error('curl_error', $error);
-    return true;
-}
-```
-
-This is what most AI plugins (e.g., AI Engine, Jeanie) actually do — they bypass the WordPress HTTP API entirely because it fundamentally cannot stream.
+7. **Full WordPress integration** — proxy, SSL certificates, cookies, and hooks must all work.
 
 ---
 
-## Summary
-
-| Approach | Core Changes? | Effort | Usability |
-|----------|--------------|--------|-----------|
-| `request.progress` hook | No | Low | Poor (still accumulates, awkward API) |
-| Bypass WP HTTP, use cURL directly | No | Low | Good (but loses WP proxy/SSL/cookie handling) |
-| Transport-level `stream_callback` | Requests lib only | Medium | Good |
-| Full streaming API | WP Core + Requests | Medium-High | Excellent |
-
-**The fundamental architectural problem** is that WordPress's HTTP API was designed around a request-response model where the response is a completed string. Every layer — from the transport return value (concatenated string) through `Requests::parse_response()` (splits string) to `WP_HTTP_Requests_Response::to_array()` (body as string) — assumes the body is available in its entirety.
-
-**The most promising existing hook** is `request.progress` in both transports, which already fires per-chunk with raw data. With cURL's automatic decompression, this data is already usable. The missing piece is preventing accumulation and providing a clean API surface.
-
----
-
-## Implementation Spec: Full Streaming API (Option C)
+## Implementation Spec
 
 ### 1. Design Principle
 
@@ -1306,68 +1127,6 @@ If a filter returns `true`, the normal response path is skipped entirely. A stre
 
 ### What Would Need to Change
 
-#### Approach A: Plugin-Level SSE (Works Today, No Core Changes)
-
-Use `rest_pre_serve_request` as an escape hatch. The endpoint handler does its own streaming:
-
-```php
-register_rest_route( 'myplugin/v1', '/stream', [
-    'methods'  => 'POST',
-    'callback' => function( WP_REST_Request $request ) {
-        // Return a marker response — actual streaming happens in the filter
-        $response = new WP_REST_Response( null, 200 );
-        $response->header( 'X-Stream-Endpoint', 'true' );
-        return $response;
-    },
-    'permission_callback' => function() { return current_user_can( 'edit_posts' ); },
-] );
-
-add_filter( 'rest_pre_serve_request', function( $served, $result, $request, $server ) {
-    if ( $request->get_route() !== '/myplugin/v1/stream' ) {
-        return $served;
-    }
-
-    // Override headers
-    header( 'Content-Type: text/event-stream' );
-    header( 'Cache-Control: no-cache' );
-    header( 'X-Accel-Buffering: no' );  // Disable nginx buffering
-
-    // Disable PHP output buffering
-    while ( ob_get_level() ) {
-        ob_end_clean();
-    }
-
-    // Stream SSE events
-    $body = json_decode( $request->get_body(), true );
-
-    // Example: proxy an LLM streaming call
-    $ch = curl_init( 'https://api.openai.com/v1/chat/completions' );
-    curl_setopt_array( $ch, [
-        CURLOPT_POST          => true,
-        CURLOPT_POSTFIELDS    => json_encode( $body ),
-        CURLOPT_HTTPHEADER    => [ 'Authorization: Bearer ' . OPENAI_KEY, 'Content-Type: application/json' ],
-        CURLOPT_WRITEFUNCTION => function( $ch, $data ) {
-            echo $data;
-            flush();
-            return strlen( $data );
-        },
-        CURLOPT_TIMEOUT       => 120,
-    ] );
-    curl_exec( $ch );
-    curl_close( $ch );
-
-    return true; // Prevent default JSON output
-}, 10, 4 );
-```
-
-**Limitations:**
-- Bypasses WordPress HTTP API (no proxy support, no `pre_http_request` filter)
-- Content-Type header already sent as `application/json` at line 318 — must re-send (works in practice because `header()` replaces previous same-name headers)
-- No integration with `WP_REST_Response` — can't use standard response helpers
-- Authentication works (runs before dispatch) but permission callbacks need careful handling
-
-#### Approach B: First-Class SSE Support in WP_REST_Server
-
 **Required changes to `serve_request()`:**
 
 **1. Defer Content-Type header (line 318)**
@@ -1482,7 +1241,7 @@ Client (browser)                    WordPress                         LLM API
      │                                  │                                │
 ```
 
-**Inbound streaming** (§ Option C above): `wp_remote_post()` with `'stream' => true, 'on_data' => callable` delivers LLM response chunks to a callback via the `stream_callback` option in the Requests transports.
+**Inbound streaming**: `wp_remote_post()` with `'stream' => true, 'on_data' => callable` delivers LLM response chunks to a callback via the `stream_callback` option in the Requests transports.
 
 **Outbound streaming** (this section): `WP_REST_Streaming_Response` bypasses the JSON encode + single echo path, instead executing a callback that can `echo` + `flush()` SSE events incrementally.
 
