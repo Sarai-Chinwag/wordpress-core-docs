@@ -1,0 +1,14 @@
+{
+  "name": "wp-docs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:fixture": "WP_DOCS_SOURCE=fixture npm run build",
+    "build:studio": "node scripts/require-wordpress-url.mjs && WP_DOCS_SOURCE=wordpress npm run build",
+    "build": "node scripts/prepare-pages.mjs && astro build",
+    "publish:spacefast": "node scripts/publish-spacefast.mjs"
+  },
+  "devDependencies": {
+    "astro": "^5.16.11"
+  }
+}

@@ -1,0 +1,30 @@
+---
+import data from '../generated/pages.json';
+import '../styles/site.css';
+
+export function getStaticPaths() {
+  return data.pages.map((page) => ({ params: { path: page.route.slice(1, -1) }, props: { page } }));
+}
+
+const { page } = Astro.props;
+const navigation = data.pages.filter((item) => item.ancestors.length === 0);
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{page.title} | WP Docs</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header><a href="/" class="brand">WP Docs</a><nav aria-label="Primary navigation">{navigation.map((item) => <a href={item.route}>{item.title}</a>)}</nav></header>
+    <div class="layout">
+      <aside aria-label="Documentation navigation"><nav>{data.pages.map((item) => <a class:list={[{ current: item.route === page.route }, `depth-${item.ancestors.length}`]} href={item.route}>{item.title}</a>)}</nav></aside>
+      <main id="content">
+        <nav class="breadcrumbs" aria-label="Breadcrumb"> <a href="/">Docs</a>{page.ancestors.map((ancestor) => <><span aria-hidden="true">/</span><a href={ancestor.route}>{ancestor.title}</a></>)}<span aria-hidden="true">/</span><span aria-current="page">{page.title}</span></nav>
+        <article><h1>{page.title}</h1><Fragment set:html={page.content} />{page.children.length > 0 && <section aria-labelledby="children"><h2 id="children">In this section</h2><ul>{page.children.map((child) => <li><a href={child.route}>{child.title}</a></li>)}</ul></section>}</article>
+      </main>
+    </div>
+  </body>
+</html>

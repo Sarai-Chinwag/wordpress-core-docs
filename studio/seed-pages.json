@@ -1,0 +1,27 @@
+{
+  "pages": [
+    {
+      "slug": "developer",
+      "title": "Developer documentation",
+      "status": "publish",
+      "menu_order": 10,
+      "content": "<p>Source-backed guidance for extending WordPress.</p>"
+    },
+    {
+      "slug": "script-modules",
+      "title": "Script Modules",
+      "parent_slug": "developer",
+      "status": "publish",
+      "menu_order": 10,
+      "content": "<p>Use Script Modules for browser features that use native modules.</p>"
+    },
+    {
+      "slug": "dependencies",
+      "title": "Dependencies and imports",
+      "parent_slug": "developer",
+      "status": "publish",
+      "menu_order": 20,
+      "content": "<p>Declare static and dynamic dependencies deliberately.</p>"
+    }
+  ]
+}

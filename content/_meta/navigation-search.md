@@ -1,6 +1,6 @@
 # Navigation and Search Metadata
 
-The theme can render docs navigation from published WordPress page hierarchy. When that content is not available yet, it falls back to the committed pilot fixture at `theme/wp-docs/assets/docs-index.json`.
+The static frontend renders navigation from published WordPress Page hierarchy. The deterministic build fixture is `frontend/fixtures/pages.json`; it is for CI and review only, not an authoring fallback.
 
 Search/navigation entries use this shape:
 

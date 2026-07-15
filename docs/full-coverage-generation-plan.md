@@ -147,36 +147,30 @@ docs-agent generation
         |
         v
 Review and publish
-  ├── internal WordPress runtime preview
-  ├── GitSync commit/PR to wp-docs
-  ├── review status updates
-  └── future WordPress.org publishing path
+  ├── local Studio Page review
+  ├── Git review/PR to wp-docs
+  ├── static artifact verification
+  └── approval-gated Spacefast publication
 ```
 
 ## Runtime Architecture
 
-The internal generation runtime is the kitchen. The `wp-docs` repository is the durable corpus and review surface.
+Local WordPress Studio is the authoring kitchen. The `wp-docs` repository is the durable corpus, provenance, and review surface; Spacefast is only a destination for a prebuilt static artifact.
 
 ```text
-WP Cloud runtime
-├── Data Machine
-│   ├── ingestion jobs
-│   ├── coverage extraction pipelines
-│   ├── page-spec generation pipelines
-│   ├── docs-agent generation flows
-│   └── review/status workflows
-├── Data Machine Code
-│   ├── source checkouts
-│   ├── wp-docs GitSync checkout
-│   └── PR submission
-├── docs-agent
-│   ├── technical-docs-agent
-│   └── user-docs-agent
-└── wp-docs theme
-    ├── navigation
-    ├── search
-    ├── provenance display
-    └── review status display
+Local Studio WordPress
+├── wp-admin Page authoring
+├── core Pages REST API
+└── compatible Studio CLI/MCP clients
+      |
+      v
+Astro static build
+├── hierarchy-aware navigation and breadcrumbs
+├── copied local media
+└── dist/ artifact
+      |
+      v
+Spacefast static publication after approval
 ```
 
 ## Responsibilities
@@ -187,7 +181,7 @@ WP Cloud runtime
 - Information architecture and content lanes.
 - Page specs, schemas, and source maps.
 - Generated and reviewed docs content.
-- Theme and internal publishing experience.
+- Static frontend and local authoring contract.
 - Project-specific recipes and review policy.
 
 `Automattic/docs-agent` owns:
@@ -196,12 +190,7 @@ WP Cloud runtime
 - Agent prompts and audience-specific writing standards.
 - Portable agent bundles, flows, and pipelines.
 
-Data Machine and Data Machine Code own:
-
-- Runtime jobs, queues, flows, and pipeline execution.
-- Source and output workspaces.
-- GitHub/GitSync operations.
-- Provenance-producing automation.
+Local Studio tooling owns local site lifecycle and WordPress access. It is not configured or controlled by this repository.
 
 ## Page Specs
 
@@ -252,7 +241,7 @@ Example:
 3. Build a WordPress Core coverage inventory from `wordpress-develop`.
 4. Generate page specs for the Script Modules vertical slice.
 5. Run docs-agent through the WP Docs runtime to generate Script Modules pages and provenance metadata.
-6. Submit generated output through GitSync as a reviewable PR.
+6. Submit generated output through Git as a reviewable PR.
 7. Expand from Script Modules to one complete subsystem at a time.
 8. Add coverage dashboard/reporting so gaps are visible.
 9. Add Gutenberg and canonical plugin source inventories.
@@ -263,6 +252,6 @@ Example:
 - Every source entity is either documented, intentionally excluded, or mapped to a future page spec.
 - Generated pages include source-backed claims and usable examples.
 - Review status is visible at page and coverage-map levels.
-- The internal WordPress site provides useful navigation and search before public publishing.
+- The prebuilt static artifact provides useful navigation and reading without client JavaScript.
 - The process can regenerate docs after upstream source changes without losing reviewed status.
-- The same architecture can be reused for WooCommerce, Jetpack, Studio, Playground, WP-CLI, Data Machine, and other products.
+- The same source inventory, provenance, and static-publication model can be reused for other WordPress documentation products.

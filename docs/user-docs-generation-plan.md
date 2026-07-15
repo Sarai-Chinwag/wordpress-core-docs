@@ -121,7 +121,7 @@ Example shape:
 
 ## Coverage Model
 
-User-doc coverage should use Data Machine tracked items just like technical coverage.
+User-doc coverage should use the same tracked page-spec and review states as technical coverage.
 
 Useful tracked item types for the user lane include:
 

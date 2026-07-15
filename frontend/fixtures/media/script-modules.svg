@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="160" viewBox="0 0 640 160" role="img" aria-label="Script module dependency diagram">
+  <rect width="640" height="160" fill="#f0f6fc"/>
+  <rect x="40" y="50" width="180" height="60" rx="8" fill="#3858e9"/>
+  <rect x="420" y="50" width="180" height="60" rx="8" fill="#3858e9"/>
+  <path d="M240 80h160" stroke="#1e293b" stroke-width="6"/>
+  <text x="70" y="87" fill="white" font-family="sans-serif" font-size="18">entry module</text>
+  <text x="450" y="87" fill="white" font-family="sans-serif" font-size="18">dependency</text>
+</svg>

@@ -1,0 +1,6 @@
+---
+import data from '../generated/pages.json';
+import '../styles/site.css';
+const roots = data.pages.filter((page) => page.ancestors.length === 0);
+---
+<!doctype html><html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>WP Docs</title></head><body><main class="landing"><p class="eyebrow">WordPress documentation</p><h1>WP Docs</h1><p>Source-backed documentation authored as hierarchical WordPress Pages and published as static HTML.</p><nav aria-label="Documentation sections"><ul>{roots.map((page) => <li><a href={page.route}>{page.title}</a></li>)}</ul></nav></main></body></html>
