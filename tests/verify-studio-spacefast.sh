@@ -25,4 +25,22 @@ if grep -R -E -i -n '(localhost|127\.0\.0\.1|studio\.test)' dist; then
   exit 1
 fi
 
-npm run publish:spacefast -- --dry-run
+sf_bin=$(mktemp -d)
+sf_args=$(mktemp)
+sf_expected=$(mktemp)
+cleanup() {
+  rm -rf "$sf_bin"
+  rm -f "$sf_args" "$sf_expected"
+}
+trap cleanup EXIT
+
+cat > "$sf_bin/sf" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$@" > "$SF_ARGS_FILE"
+EOF
+chmod +x "$sf_bin/sf"
+
+PATH="$sf_bin:$PATH" SF_ARGS_FILE="$sf_args" npm run publish:spacefast -- --dry-run
+printf 'deploy\ndist\n--prebuilt\n--dry-run\n' > "$sf_expected"
+cmp -s "$sf_expected" "$sf_args"

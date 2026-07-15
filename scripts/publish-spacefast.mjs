@@ -13,18 +13,5 @@ if (!dryRun && process.env.WP_DOCS_ALLOW_PUBLISH !== '1') {
   console.error('Publication is approval-gated. Re-run with WP_DOCS_ALLOW_PUBLISH=1 only after explicit approval, or use --dry-run.');
   process.exit(1);
 }
-const help = spawnSync('spacefast', ['--help'], { encoding: 'utf8' });
-if (help.error && help.error.code === 'ENOENT') {
-  console.log('Spacefast CLI is not installed; no publication was attempted.');
-  process.exit(0);
-}
-if (help.status !== 0 || !/deploy/i.test(`${help.stdout}${help.stderr}`)) {
-  console.error('Installed Spacefast CLI does not advertise a deploy command; no publication was attempted.');
-  process.exit(1);
-}
-if (dryRun && !/dry.run/i.test(`${help.stdout}${help.stderr}`)) {
-  console.log('Installed Spacefast CLI does not advertise a dry-run flag; no publication was attempted.');
-  process.exit(0);
-}
-const result = spawnSync('spacefast', ['deploy', output, ...(dryRun ? ['--dry-run'] : [])], { stdio: 'inherit' });
+const result = spawnSync('sf', ['deploy', output, '--prebuilt', ...(dryRun ? ['--dry-run'] : [])], { stdio: 'inherit' });
 process.exit(result.status ?? 1);

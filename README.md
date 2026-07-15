@@ -52,7 +52,7 @@ That archive is useful as seed material and historical context, but it is not th
 
 ## Verify A Fresh Checkout
 
-1. Install Node.js 20 or newer and run `bash tests/verify-studio-spacefast.sh`.
+1. Install Node.js 22.12 or newer and run `bash tests/verify-studio-spacefast.sh`.
 2. Inspect `dist/developer/script-modules/index.html`; it is a complete nested static route with navigation, breadcrumbs, semantic content, and copied media.
 3. To use a local Studio site after following `studio/README.md`, run `WP_DOCS_WORDPRESS_URL=http://localhost:8888 npm run build:studio`.
-4. Before any human-approved publication, run `npm run publish:spacefast -- --dry-run`. The command only considers `dist/` and makes no mutation without `WP_DOCS_ALLOW_PUBLISH=1`.
+4. Before any human-approved publication, run `npm run publish:spacefast -- --dry-run`, which invokes `sf deploy dist --prebuilt --dry-run`. An approved publication invokes `sf deploy dist --prebuilt`; the wrapper only considers `dist/` and makes no mutation without `WP_DOCS_ALLOW_PUBLISH=1`.

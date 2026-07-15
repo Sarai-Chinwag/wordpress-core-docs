@@ -16,6 +16,6 @@ WordPress Studio is the local canonical authoring backend. This repository does 
 3. Edit and publish Pages in wp-admin or through the same local interface.
 4. Set `WP_DOCS_WORDPRESS_URL` to the site's local URL and run `npm run build:studio`.
 5. Run `bash tests/verify-studio-spacefast.sh`; it uses the fixture and needs neither Studio nor credentials.
-6. After a human explicitly approves publication, build the approved artifact and run `WP_DOCS_ALLOW_PUBLISH=1 npm run publish:spacefast`. Use `npm run publish:spacefast -- --dry-run` first.
+6. After a human explicitly approves publication, build the approved artifact and run `WP_DOCS_ALLOW_PUBLISH=1 npm run publish:spacefast`, which invokes `sf deploy dist --prebuilt`. Use `npm run publish:spacefast -- --dry-run` first; it invokes `sf deploy dist --prebuilt --dry-run`.
 
 Studio Code is one possible client for these operations, not a required dependency. Any agent with stable Studio CLI/MCP and local WordPress access can use the same sequence.

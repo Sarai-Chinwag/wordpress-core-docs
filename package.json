@@ -9,6 +9,6 @@
     "publish:spacefast": "node scripts/publish-spacefast.mjs"
   },
   "devDependencies": {
-    "astro": "^5.16.11"
+    "astro": "^6.4.8"
   }
 }
