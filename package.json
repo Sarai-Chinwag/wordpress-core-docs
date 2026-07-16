@@ -1,0 +1,17 @@
+{
+  "name": "wp-docs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prepare:blume": "node scripts/prepare-blume-content.mjs",
+    "build": "npm run prepare:blume && blume build && node scripts/prepare-spacefast-output.mjs",
+    "check": "blume check",
+    "verify:studio": "bash tests/verify-studio-mdi.sh",
+    "verify:studio:mutate": "bash tests/verify-studio-mdi.sh --mutate",
+    "publish:spacefast": "node scripts/publish-spacefast.mjs"
+  },
+  "devDependencies": {
+    "blume": "1.0.4",
+    "gray-matter": "4.0.3"
+  }
+}

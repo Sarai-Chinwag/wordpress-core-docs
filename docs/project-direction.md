@@ -4,7 +4,7 @@
 
 `wp-docs` uses `docs-agent` to generate WordPress core and canonical plugin documentation from public source material.
 
-The project should become both the generation workspace and the future publishing foundation for a WordPress.org-compatible docs experience that is comprehensive, massively useful, and pleasant to navigate.
+The project is the generation workspace and static publishing foundation for a WordPress-compatible docs experience that is comprehensive, massively useful, and pleasant to navigate.
 
 The quality target is not merely "generated documentation exists." The target is documentation on par with the best modern docs sites: clear information architecture, fast navigation, useful examples, trustworthy reference material, and paths that help different readers get from question to answer quickly.
 
@@ -18,8 +18,8 @@ wp-docs
   + generated WordPress core and canonical plugin documentation corpus
   + page-level provenance and review metadata
   + WP Codebox recipes for reproducible runs
-  + WordPress-native theme prototype
-  + eventual WordPress.org publishing surface
+  + local WordPress Studio authoring site
+  + static documentation artifact for Spacefast
 ```
 
 ## Documentation Lanes
@@ -45,25 +45,25 @@ This repo should not reimplement the surrounding tools:
 
 - `docs-agent` owns reusable agent bundles, prompt policy, and docs maintenance behavior.
 - `wp-codebox` owns sandbox recipes, isolated WordPress execution, previews, and artifact bundle shape.
-- `wp-docs` owns the WordPress docs project: source inventories, content lanes, project-specific recipes, review decisions, and publishing direction.
+- `wp-docs` owns the WordPress docs project: source inventories, content lanes, project-specific recipes, review decisions, and the Studio-to-static publishing direction.
 
 ## WordPress.org Compatibility
 
 The project should assume that successful output eventually needs to fit WordPress.org patterns and expectations:
 
 - Public source and public review by default.
-- WordPress-native publishing path.
+- Local WordPress authoring and static artifact publication.
 - Clear content provenance and review state.
 - Separation between user documentation and developer documentation.
 - Original implementation inspired by strong docs sites, not copied from source-available codebases.
 
-## Theme Direction
+## Authoring And Publication Direction
 
-The theme lives in this repo at `theme/wp-docs/` so the generated corpus and publishing experience can evolve together.
+WordPress Studio is a local canonical authoring backend. Humans edit hierarchical Pages in wp-admin, while any compatible agent can use stable Studio CLI/MCP and local WordPress interfaces. No particular agent or Studio Code client is required.
 
-The first theme should be a WordPress-native block theme. Tailwind, shadcn, and similar docs sites are structural references for information architecture, navigation patterns, page density, and example presentation; they are not dependency requirements.
+`frontend/` is a deliberately small Astro implementation rather than Starlight: WordPress, not a file-based content collection, owns the hierarchy and content lifecycle, and the custom REST adapter is smaller than adapting Starlight's authoring assumptions. The build uses `WP_DOCS_WORDPRESS_URL`, reads the core Pages REST endpoint, and produces static routes with server-rendered navigation and breadcrumbs. Client JavaScript is not needed for reading or navigation.
 
-The theme is a prototype extraction surface: build the docs experience here, then later cherry-pick or port the useful parts into the final WordPress.org implementation path.
+Spacefast receives only `dist/`, the prebuilt artifact. It never receives local WordPress access. This adds a local editorial backend to Git plus static hosting; it does not claim to replace either Git review/provenance or a general hosted WordPress product.
 
 ## Product Quality Bar
 
