@@ -39,6 +39,24 @@ final class WPDocs_Codec {
 		return $normalized;
 	}
 
+	/** @param array<int,array<string,mixed>> $terms */
+	public static function normalize_terms( array $terms ) {
+		$normalized = array();
+		foreach ( $terms as $term ) {
+			$normalized[] = array(
+				'taxonomy'    => (string) ( $term['taxonomy'] ?? '' ),
+				'slug'        => (string) ( $term['slug'] ?? '' ),
+				'name'        => (string) ( $term['name'] ?? '' ),
+				'description' => (string) ( $term['description'] ?? '' ),
+				'parent_slug' => (string) ( $term['parent_slug'] ?? '' ),
+			);
+		}
+		usort( $normalized, static function ( $left, $right ) {
+			return strcmp( $left['taxonomy'] . "\0" . $left['slug'], $right['taxonomy'] . "\0" . $right['slug'] );
+		} );
+		return $normalized;
+	}
+
 	/** @param array<string,mixed> $record */
 	public static function encode( array $record ) {
 		$record = self::normalize_record( $record );

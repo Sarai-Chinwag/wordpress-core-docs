@@ -11,10 +11,14 @@ final class WPDocs_URLs {
 		return 'https://' . strtolower( $parts['host'] ) . rtrim( $parts['path'] ?? '', '/' );
 	}
 
-	/** @param array<int,object> $ancestors */
+	/**
+	 * Ancestors are ordered from the document root to the immediate parent.
+	 *
+	 * @param array<int,object> $ancestors
+	 */
 	public static function canonical_path( $post, array $ancestors = array() ) {
 		$parts = array();
-		foreach ( array_reverse( $ancestors ) as $ancestor ) { $parts[] = $ancestor->post_name; }
+		foreach ( $ancestors as $ancestor ) { $parts[] = $ancestor->post_name; }
 		$parts[] = $post->post_name;
 		return '/' . implode( '/', array_filter( $parts ) ) . '/';
 	}

@@ -103,12 +103,25 @@ final class WPDocs_Plugin {
 		}
 	}
 
-	public static function rest_export( $request ) { return rest_ensure_response( WPDocs_Sync::export_artifact( self::records( $request->get_param( 'ids' ) ?: array() ), get_option( self::OPTION_BASE_URL, '' ) ) ); }
+	public static function rest_export( $request ) { return rest_ensure_response( WPDocs_Sync::export_artifact( self::records( $request->get_param( 'ids' ) ?: array() ), get_option( self::OPTION_BASE_URL, '' ), self::term_records() ) ); }
 	public static function rest_import_preview( $request ) { try { return rest_ensure_response( WPDocs_Sync::preview_import( self::decode_records( $request->get_param( 'records' ) ), self::records() ) ); } catch ( Exception $error ) { return new WP_Error( 'wpdocs_invalid_import', $error->getMessage(), array( 'status' => 400 ) ); } }
 	public static function rest_import_apply( $request ) {
 		try { $plan = WPDocs_Sync::validate_apply( (array) $request->get_param( 'plan' ), self::decode_records( $request->get_param( 'records' ) ), self::records() ); self::apply_changes( $plan['changes'] ); return rest_ensure_response( $plan ); } catch ( Exception $error ) { return new WP_Error( 'wpdocs_stale_import', $error->getMessage(), array( 'status' => 409 ) ); }
 	}
 	private static function decode_records( $markdown ) { return array_map( array( 'WPDocs_Codec', 'decode' ), (array) $markdown ); }
+	/** @return array<int,array<string,string>> */
+	public static function term_records() {
+		$records = array();
+		foreach ( array( self::COLLECTION, self::TOPIC ) as $taxonomy ) {
+			$terms = get_terms( array( 'taxonomy' => $taxonomy, 'hide_empty' => false ) );
+			if ( is_wp_error( $terms ) ) { throw new RuntimeException( $terms->get_error_message() ); }
+			foreach ( $terms as $term ) {
+				$parent = $term->parent ? get_term( $term->parent, $taxonomy ) : null;
+				$records[] = array( 'taxonomy' => $taxonomy, 'slug' => $term->slug, 'name' => $term->name, 'description' => $term->description, 'parent_slug' => $parent && ! is_wp_error( $parent ) ? $parent->slug : '' );
+			}
+		}
+		return WPDocs_Codec::normalize_terms( $records );
+	}
 	public static function apply_changes( $changes ) {
 		$ids = array();
 		$parent_updates = array();
@@ -123,12 +136,37 @@ final class WPDocs_Plugin {
 			$ids[ $record['identity'] ] = $post_id;
 			$parent_updates[ $post_id ] = $record['parent_identity'];
 			update_post_meta( $post_id, 'wpdocs_identity', $record['identity'] );
-			wp_set_object_terms( $post_id, $record['terms']['collections'], self::COLLECTION, false );
-			wp_set_object_terms( $post_id, $record['terms']['topics'], self::TOPIC, false );
+			$collections = wp_set_object_terms( $post_id, $record['terms']['collections'], self::COLLECTION, false );
+			if ( is_wp_error( $collections ) ) { throw new RuntimeException( $collections->get_error_message() ); }
+			$topics = wp_set_object_terms( $post_id, $record['terms']['topics'], self::TOPIC, false );
+			if ( is_wp_error( $topics ) ) { throw new RuntimeException( $topics->get_error_message() ); }
 		}
 		foreach ( $parent_updates as $post_id => $parent_identity ) {
-			wp_update_post( array( 'ID' => $post_id, 'post_parent' => $ids[ $parent_identity ] ?? 0 ) );
+			$updated = wp_update_post( array( 'ID' => $post_id, 'post_parent' => '' === $parent_identity ? 0 : $ids[ $parent_identity ] ), true );
+			if ( is_wp_error( $updated ) ) { throw new RuntimeException( $updated->get_error_message() ); }
 		}
+	}
+
+	/** @param array<int,string> $paths @return array<int,array<string,mixed>> */
+	public static function decode_record_files( array $paths ) {
+		$records = array();
+		foreach ( $paths as $path ) {
+			if ( ! is_file( $path ) || ! is_readable( $path ) ) { throw new InvalidArgumentException( 'WPDocs record file is missing or unreadable: ' . $path ); }
+			$content = file_get_contents( $path );
+			if ( false === $content ) { throw new InvalidArgumentException( 'WPDocs record file is unreadable: ' . $path ); }
+			try { $records[] = WPDocs_Codec::decode( $content ); } catch ( Exception $error ) { throw new InvalidArgumentException( 'WPDocs record file is invalid (' . $path . '): ' . $error->getMessage() ); }
+		}
+		return $records;
+	}
+
+	/** @return array<string,mixed> */
+	public static function read_plan_file( $path ) {
+		if ( ! is_file( $path ) || ! is_readable( $path ) ) { throw new InvalidArgumentException( 'WPDocs plan file is missing or unreadable: ' . $path ); }
+		$content = file_get_contents( $path );
+		if ( false === $content ) { throw new InvalidArgumentException( 'WPDocs plan file is unreadable: ' . $path ); }
+		try { $plan = json_decode( $content, true, 512, JSON_THROW_ON_ERROR ); } catch ( Exception $error ) { throw new InvalidArgumentException( 'WPDocs plan file is invalid JSON: ' . $path ); }
+		if ( ! is_array( $plan ) ) { throw new InvalidArgumentException( 'WPDocs plan file must contain a JSON object: ' . $path ); }
+		return $plan;
 	}
 }
 
@@ -139,7 +177,7 @@ add_filter( 'post_type_link', array( 'WPDocs_Plugin', 'document_permalink' ), 10
 add_filter( 'preview_post_link', array( 'WPDocs_Plugin', 'document_preview_link' ), 10, 2 );
 
 if ( defined( 'WP_CLI' ) && WP_CLI ) {
-	WP_CLI::add_command( 'wpdocs export', static function () { WP_CLI::line( WPDocs_Codec::json( WPDocs_Sync::export_artifact( WPDocs_Plugin::records(), get_option( WPDocs_Plugin::OPTION_BASE_URL, '' ) ) ) ); } );
-	WP_CLI::add_command( 'wpdocs import-preview', static function ( $args ) { WP_CLI::line( WPDocs_Codec::json( WPDocs_Sync::preview_import( array_map( array( 'WPDocs_Codec', 'decode' ), $args ), WPDocs_Plugin::records() ) ) ); } );
-	WP_CLI::add_command( 'wpdocs import-apply', static function ( $args ) { if ( count( $args ) < 2 ) { WP_CLI::error( 'Usage: wpdocs import-apply <plan-json> <record.md>...' ); } $plan = json_decode( array_shift( $args ), true ); try { $fresh = WPDocs_Sync::validate_apply( (array) $plan, array_map( array( 'WPDocs_Codec', 'decode' ), $args ), WPDocs_Plugin::records() ); WPDocs_Plugin::apply_changes( $fresh['changes'] ); WP_CLI::line( WPDocs_Codec::json( $fresh ) ); } catch ( Exception $error ) { WP_CLI::error( $error->getMessage() ); } } );
+	WP_CLI::add_command( 'wpdocs export', static function () { WP_CLI::line( WPDocs_Codec::json( WPDocs_Sync::export_artifact( WPDocs_Plugin::records(), get_option( WPDocs_Plugin::OPTION_BASE_URL, '' ), WPDocs_Plugin::term_records() ) ) ); } );
+	WP_CLI::add_command( 'wpdocs import-preview', static function ( $args ) { try { WP_CLI::line( WPDocs_Codec::json( WPDocs_Sync::preview_import( WPDocs_Plugin::decode_record_files( $args ), WPDocs_Plugin::records() ) ) ); } catch ( Exception $error ) { WP_CLI::error( $error->getMessage() ); } } );
+	WP_CLI::add_command( 'wpdocs import-apply', static function ( $args ) { if ( count( $args ) < 2 ) { WP_CLI::error( 'Usage: wpdocs import-apply <plan.json> <record.md>...' ); } try { $plan = WPDocs_Plugin::read_plan_file( array_shift( $args ) ); $fresh = WPDocs_Sync::validate_apply( $plan, WPDocs_Plugin::decode_record_files( $args ), WPDocs_Plugin::records() ); WPDocs_Plugin::apply_changes( $fresh['changes'] ); WP_CLI::line( WPDocs_Codec::json( $fresh ) ); } catch ( Exception $error ) { WP_CLI::error( $error->getMessage() ); } } );
 }
