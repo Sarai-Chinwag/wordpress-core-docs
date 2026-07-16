@@ -1,7 +1,22 @@
-# WordPress Editorial Plugin
+# WordPress Plugin
 
-`plugins/wp-docs` is a distributable WordPress plugin that provides the first local artifact and synchronization contract. It adds private hierarchical documentation records in wp-admin, serializes them as deterministic JSON-frontmatter Markdown, and plans safe imports. It does not replace the Git Markdown corpus or the existing Blume frontend.
+`plugins/wp-docs` owns the WordPress documentation content model. It registers an admin-only hierarchical `wpdocs_document` post type, hierarchical collections, flat topics, and static documentation URLs.
 
-Install by copying `plugins/wp-docs` into `wp-content/plugins/wp-docs`, activating it, and setting an HTTPS Docs base URL in **Settings > Writing**. Configure DNS for `docs.example.com` to the static host and serve the Blume artifact there. WordPress document links then use the static hostname while the WordPress frontend never exposes documents.
+Push MD owns Git transport, repository history, Markdown conversion, conflict detection, branch review, and WordPress mutations. WP Docs registers a content adapter that adds:
 
-Export/import REST and WP-CLI interfaces exchange local artifacts only. External orchestration commits accepted Markdown to Git; that accepted commit is the publication record. Remote Git transport, host providers, DNS APIs, credentials, and deployment adapters are intentionally follow-up scope.
+- nested `wpdocs_document/<parent>/<document>.md` paths;
+- sorted `collections` and `topics` front matter values;
+- pre-mutation rejection of invalid or missing taxonomy slugs;
+- explicit taxonomy assignment errors.
+
+The POC requires the Push MD content-adapter branch tracked by [Automattic/php-toolkit#79](https://github.com/Automattic/php-toolkit/issues/79). It does not maintain the earlier parallel WP Docs REST/CLI artifact protocol.
+
+## Current limits
+
+- Collections and topics must already exist in WordPress before Git assigns them.
+- A parent document must exist before a nested child document can be pushed.
+- Push MD-to-Blume translation, Git hosting mirrors, static deployment, and DNS remain setup-prompt steps rather than plugin behavior.
+
+## Verification
+
+Run `bash tests/verify-wordpress-plugin.sh` for the self-contained contract. Against an installed WordPress runtime with both plugins active, run `bash tests/verify-wordpress-plugin-runtime.sh /path/to/wordpress`.
