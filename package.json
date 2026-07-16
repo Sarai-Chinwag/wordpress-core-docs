@@ -6,6 +6,8 @@
     "prepare:blume": "node scripts/prepare-blume-content.mjs",
     "build": "npm run prepare:blume && blume build && node scripts/prepare-spacefast-output.mjs",
     "check": "blume check",
+    "verify:studio": "bash tests/verify-studio-mdi.sh",
+    "verify:studio:mutate": "bash tests/verify-studio-mdi.sh --mutate",
     "publish:spacefast": "node scripts/publish-spacefast.mjs"
   },
   "devDependencies": {
