@@ -3,12 +3,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:fixture": "WP_DOCS_SOURCE=fixture npm run build",
-    "build:studio": "node scripts/require-wordpress-url.mjs && WP_DOCS_SOURCE=wordpress npm run build",
-    "build": "node scripts/prepare-pages.mjs && astro build",
+    "prepare:blume": "node scripts/prepare-blume-content.mjs",
+    "build": "npm run prepare:blume && blume build && node scripts/prepare-spacefast-output.mjs",
+    "check": "blume check",
     "publish:spacefast": "node scripts/publish-spacefast.mjs"
   },
   "devDependencies": {
-    "astro": "^6.4.8"
+    "blume": "1.0.4",
+    "gray-matter": "4.0.3"
   }
 }

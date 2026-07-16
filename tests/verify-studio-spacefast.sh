@@ -2,26 +2,29 @@
 set -euo pipefail
 
 npm ci
-npm run build:fixture
+npm run build
 
 test -f dist/index.html
-test -f dist/developer/index.html
-test -f dist/developer/script-modules/index.html
-test -f dist/developer/dependencies/index.html
-test -f dist/media/"$(node -e "const c=require('node:crypto'); console.log(c.createHash('sha256').update('http://studio.test/wp-content/uploads/script-modules.svg').digest('hex').slice(0,16))").svg"
+test "$(find content/runtime/documentation -type f -name '*.md' | wc -l)" -eq 89
+test "$(find content/runtime/helphub_article -type f -name '*.md' | wc -l)" -eq 314
+test -f dist/documentation/developer-tools/wp-cli/common-commands/index.html
+test -f dist/helphub_article/search-block/index.html
+test -f dist/llms.txt
+test -f dist/robots.txt
+test -f dist/sitemap.xml
+test -f dist/blume-search.json
+test ! -e dist/README.md
 
-for page in dist/developer/index.html dist/developer/script-modules/index.html dist/developer/dependencies/index.html; do
+for page in dist/index.html dist/documentation/developer-tools/wp-cli/common-commands/index.html dist/helphub_article/search-block/index.html; do
   test -s "$page"
   grep -qi '<!doctype html>' "$page"
   grep -q '<main' "$page"
 done
 
-grep -q 'Script Modules' dist/developer/script-modules/index.html
-grep -q 'Dependencies and imports' dist/developer/dependencies/index.html
-grep -q 'aria-label="Breadcrumb"' dist/developer/script-modules/index.html
-grep -q 'language-php' dist/developer/script-modules/index.html
-if grep -R -E -i -n '(localhost|127\.0\.0\.1|studio\.test)' dist; then
-  echo 'Generated output contains a local backend URL.' >&2
+grep -q 'WordPress.com developer documentation' dist/index.html
+grep -q 'WordPress.org documentation' dist/index.html
+if grep -R -E -i -n 'wpcloudstation\.dev' dist; then
+  echo 'Generated output contains a retired WP Cloud runtime URL.' >&2
   exit 1
 fi
 
@@ -42,5 +45,5 @@ EOF
 chmod +x "$sf_bin/sf"
 
 PATH="$sf_bin:$PATH" SF_ARGS_FILE="$sf_args" npm run publish:spacefast -- --dry-run
-printf 'deploy\ndist\n--prebuilt\n--dry-run\n' > "$sf_expected"
+printf 'deploy\ndist\n--prebuilt\n--space\nwp-docs\n--yes\n--wait\n--dry-run\n' > "$sf_expected"
 cmp -s "$sf_expected" "$sf_args"
