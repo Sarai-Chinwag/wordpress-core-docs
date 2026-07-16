@@ -22,6 +22,7 @@ Blume reads `content/runtime/` directly and owns the generated Astro presentatio
 - `studio/` — local MDI/Studio authoring contract.
 - `scripts/` — build adapters and approval-gated publishing command.
 - `docs/` — project architecture, decisions, and operating notes.
+- `plugins/wp-docs/` — installable local WordPress editorial and Markdown artifact plugin; see `docs/wordpress-plugin.md`.
 
 The full-coverage generation plan is tracked in `docs/full-coverage-generation-plan.md`.
 
