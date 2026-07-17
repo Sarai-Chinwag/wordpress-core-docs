@@ -4,13 +4,14 @@ import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import test from 'node:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { approved, contentKind, normalizeDocsUrl, normalizeHostname, normalizeOrigin, planSetup, redact, sourceRootFor } from '../scripts/setup-customer.mjs';
+import { approved, callAbility, clonePlan, contentKind, normalizeDocsUrl, normalizeHostname, normalizeOrigin, planSetup, publicationEndpoint, redact, selectQueuedPublication, sourceRootFor, withoutWordPressCredentials } from '../scripts/setup-customer.mjs';
+import { parsePublishResult } from '../scripts/publish-spacefast.mjs';
 
 test('plans a normalized, provider-neutral setup without credential arguments', () => {
   const plan = planSetup({ origin: 'https://Example.test/wp/', contentRoot: 'content/runtime', space: 'customer-docs', customHostname: 'docs.example.test', docsUrl: 'https://docs.example.test' });
   assert.equal(plan.origin, 'https://example.test/wp');
   assert.deepEqual(plan.steps.at(0), ['GET', 'https://example.test/wp/wp-json/wp/v2/settings?context=edit']);
-  assert.deepEqual(plan.steps.at(-1), ['PUT', 'https://example.test/wp/wp-json/wp/v2/settings', 'wpdocs_base_url after hostname health check']);
+  assert.deepEqual(plan.steps.at(-1), ['POST', 'https://example.test/wp/wp-json/wp-abilities/v1/abilities/wpdocs/report-publication/run', 'verified succeeded report updates wpdocs_base_url']);
   assert.equal(plan.steps.some((step) => step[0] === 'sf' && step[1] === 'status'), true);
   assert.equal(plan.steps.some((step) => step[0] === 'sf' && step[1] === 'domains' && step[2] === 'add'), true);
   assert.equal(plan.steps.some((step) => step[0] === 'sf' && step[1] === 'domains' && step[2] === 'diagnostics'), true);
@@ -60,4 +61,53 @@ test('recognizes a Push MD clone root without changing bundled content behavior'
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('uses the core Ability REST runner surface, an ephemeral authenticated clone plan, and credential-isolated child environments', () => {
+  assert.equal(publicationEndpoint('https://example.test/wp', 'report-publication'), 'https://example.test/wp/wp-json/wp-abilities/v1/abilities/wpdocs/report-publication/run');
+  assert.deepEqual(clonePlan('https://example.test/wp-json/git/v1/md.git'), ['git', 'clone', '--depth', '1', 'https://example.test/wp-json/git/v1/md.git', '<ephemeral-content-root>']);
+  const child = withoutWordPressCredentials({ WP_DOCS_APP_PASSWORD: 'app-password', WP_DOCS_GIT_PASSWORD: 'git-password', SAFE: '1' });
+  assert.deepEqual(child, { SAFE: '1' });
+});
+
+test('consumes the oldest queued request and accepts exact ready Spacefast publication evidence', () => {
+  const request = selectQueuedPublication([
+    { request_id: 'newer', state: 'queued' },
+    { request_id: 'running', state: 'running' },
+    { request_id: 'older', state: 'queued' }
+  ]);
+  assert.equal(request.request_id, 'older');
+
+  const publication = parsePublishResult(JSON.stringify({ data: {
+    spaceId: 'spc_123', versionId: 'ver_456', versionRef: 'v42', versionStatus: 'ready',
+    liveVersionId: 'ver_456', immutableUrl: 'https://v42--docs.view.fast', siteUrl: 'https://docs.view.fast'
+  } }));
+  assert.deepEqual(publication, {
+    spaceId: 'spc_123', versionId: 'ver_456', versionRef: 'v42',
+    immutableUrl: 'https://v42--docs.view.fast', siteUrl: 'https://docs.view.fast'
+  });
+  assert.throws(() => parsePublishResult(JSON.stringify({ data: {
+    spaceId: 'spc_123', versionId: 'ver_456', versionStatus: 'ready', liveVersionId: 'ver_old',
+    immutableUrl: 'https://v42--docs.view.fast'
+  } })), /ready and live/);
+});
+
+test('uses the HTTP methods required by WordPress core Ability annotations', async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return { ok: true, json: async () => ({ data: [] }) };
+  };
+  try {
+    const credentials = { username: 'administrator', password: 'application-password' };
+    await callAbility('https://example.test', 'get-publication-status', credentials);
+    await callAbility('https://example.test', 'report-publication', credentials, { request_id: 'request', state: 'running' });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(calls[0].options.method, 'GET');
+  assert.equal(calls[0].options.body, undefined);
+  assert.equal(calls[1].options.method, 'POST');
+  assert.equal(JSON.parse(calls[1].options.body).state, 'running');
 });

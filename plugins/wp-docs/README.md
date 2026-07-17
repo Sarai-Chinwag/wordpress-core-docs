@@ -14,7 +14,7 @@ Push MD exposes the site at `/wp-json/git/v1/md.git`. Documents use nested `wpdo
 
 Taxonomy terms must already exist in WordPress before a Git push assigns them. Push MD rejects unknown or non-canonical term slugs before changing content. Existing Push MD hierarchy rules also require a nested document's parent to exist before the child is pushed.
 
-The plugin does not implement a second REST, WP-CLI, manifest, or Git synchronization protocol. Provider hosting, DNS, Git mirrors, static builds, and deployment remain separate adapters. Spacefast is currently one adapter; a future Pressable or static-host adapter belongs outside this plugin.
+The plugin registers provider-neutral WordPress 6.9+ Abilities for previewing, requesting, inspecting, and reporting publication. WordPress stores a bounded request history and updates the Docs base URL only after a credentialed external runner reports verified success. Provider hosting, DNS, Git mirrors, static builds, and deployment remain separate adapters. Spacefast is currently one adapter; a future Pressable or static-host adapter belongs outside this plugin.
 
 ## DNS And Static Hosting
 

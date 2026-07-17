@@ -14,6 +14,7 @@
 defined( 'ABSPATH' ) || exit;
 
 require_once __DIR__ . '/includes/class-wpdocs-urls.php';
+require_once __DIR__ . '/includes/class-wpdocs-publication.php';
 
 final class WPDocs_Plugin {
 	const POST_TYPE       = 'wpdocs_document';
@@ -225,10 +226,51 @@ final class WPDocs_Plugin {
 			}
 		}
 	}
+
+	public static function register_ability_category() {
+		wp_register_ability_category( 'wpdocs-publication', array( 'label' => 'WP Docs publication', 'description' => 'Publication request and status operations for WP Docs.' ) );
+	}
+
+	public static function register_abilities() {
+		$abilities = array(
+			'preview-publication' => array( 'Preview publication', 'Returns the Push MD source and current WP Docs publication context.', 'preview', true, array( 'readonly' => true, 'destructive' => false, 'idempotent' => true ) ),
+			'request-publication' => array( 'Request publication', 'Queues an explicit publication request for the credentialed external runner.', 'request', false, array( 'readonly' => false, 'destructive' => false, 'idempotent' => true ) ),
+			'get-publication-status' => array( 'Get publication status', 'Returns a durable publication request status record.', 'status', true, array( 'readonly' => true, 'destructive' => false, 'idempotent' => true ) ),
+			'report-publication' => array( 'Report publication', 'Records a runner state transition and verified publication evidence.', 'report', false, array( 'readonly' => false, 'destructive' => false, 'idempotent' => false ) ),
+		);
+		foreach ( $abilities as $name => $definition ) {
+			wp_register_ability( 'wpdocs/' . $name, array(
+				'label' => $definition[0], 'description' => $definition[1], 'category' => 'wpdocs-publication',
+				'input_schema' => self::publication_input_schema( $definition[2] ), 'output_schema' => array( 'type' => array( 'object', 'array' ) ),
+				'execute_callback' => array( 'WPDocs_Publication', $definition[2] ),
+				'permission_callback' => $definition[3] ? array( __CLASS__, 'can_read_publication' ) : array( __CLASS__, 'can_mutate_publication' ),
+				'meta' => array( 'public' => true, 'show_in_rest' => true, 'annotations' => $definition[4] ),
+			) );
+		}
+	}
+
+	private static function publication_input_schema( $operation ) {
+		$schema = array( 'type' => 'object', 'additionalProperties' => false, 'properties' => array() );
+		if ( 'request' === $operation ) { $schema['properties']['source_git_endpoint'] = array( 'type' => 'string', 'format' => 'uri' ); }
+		if ( 'status' === $operation ) { $schema['properties']['request_id'] = array( 'type' => 'string' ); }
+		if ( 'report' === $operation ) {
+			$schema['properties'] = array(
+				'request_id' => array( 'type' => 'string' ), 'state' => array( 'type' => 'string', 'enum' => array( 'running', 'succeeded', 'failed' ) ), 'verified' => array( 'type' => 'boolean' ), 'failure' => array( 'type' => 'string', 'maxLength' => 500 ),
+				'artifact' => array( 'type' => 'object', 'additionalProperties' => false, 'properties' => array( 'serving_url' => array( 'type' => 'string', 'format' => 'uri' ), 'version' => array( 'type' => 'string' ), 'identifier' => array( 'type' => 'string' ), 'immutable_url' => array( 'type' => 'string', 'format' => 'uri' ), 'source_revision' => array( 'type' => 'string' ) ) ),
+			);
+			$schema['required'] = array( 'request_id', 'state' );
+		}
+		return $schema;
+	}
+
+	public static function can_read_publication() { return current_user_can( 'manage_options' ); }
+	public static function can_mutate_publication() { return current_user_can( 'manage_options' ); }
 }
 
 add_action( 'init', array( 'WPDocs_Plugin', 'register' ) );
 add_action( 'admin_init', array( 'WPDocs_Plugin', 'admin_init' ) );
 add_action( 'rest_api_init', array( 'WPDocs_Plugin', 'register_settings' ) );
+add_action( 'wp_abilities_api_categories_init', array( 'WPDocs_Plugin', 'register_ability_category' ) );
+add_action( 'wp_abilities_api_init', array( 'WPDocs_Plugin', 'register_abilities' ) );
 add_filter( 'post_type_link', array( 'WPDocs_Plugin', 'document_permalink' ), 10, 4 );
 add_filter( 'preview_post_link', array( 'WPDocs_Plugin', 'document_preview_link' ), 10, 2 );

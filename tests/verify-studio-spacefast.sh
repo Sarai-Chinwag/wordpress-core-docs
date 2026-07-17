@@ -42,9 +42,19 @@ cat > "$sf_bin/sf" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$@" > "$SF_ARGS_FILE"
+if printf '%s\n' "$@" | grep -q -- '--dry-run'; then
+  printf '%s\n' '{"data":{"dryRun":true}}'
+else
+  printf '%s\n' '{"data":{"spaceId":"spc_test","versionId":"ver_test","versionRef":"v42","versionStatus":"ready","liveVersionId":"ver_test","immutableUrl":"https://v42--docs.view.fast","siteUrl":"https://docs.view.fast"}}'
+fi
 EOF
 chmod +x "$sf_bin/sf"
 
 PATH="$sf_bin:$PATH" SF_ARGS_FILE="$sf_args" WP_DOCS_SPACEFAST_TARGET=customer-docs npm run publish:spacefast -- --dry-run
-printf 'publish\ndist\n--prebuilt\n--space\ncustomer-docs\n--yes\n--wait\n--dry-run\n' > "$sf_expected"
+printf 'publish\ndist\n--space\ncustomer-docs\n--yes\n--wait\n--json\n--dry-run\n' > "$sf_expected"
 cmp -s "$sf_expected" "$sf_args"
+
+publish_output=$(PATH="$sf_bin:$PATH" SF_ARGS_FILE="$sf_args" WP_DOCS_SPACEFAST_TARGET=customer-docs WP_DOCS_ALLOW_PUBLISH=1 npm run --silent publish:spacefast)
+printf 'publish\ndist\n--space\ncustomer-docs\n--yes\n--wait\n--json\n' > "$sf_expected"
+cmp -s "$sf_expected" "$sf_args"
+printf '%s' "$publish_output" | grep -q '"versionId":"ver_test"'

@@ -55,6 +55,19 @@ export function contentKind(contentRoot) {
   throw new Error('Content root must be content/runtime or a Push MD clone containing wpdocs_document/.');
 }
 
+export function publicationEndpoint(origin, ability) {
+  return `${normalizeOrigin(origin)}/wp-json/wp-abilities/v1/abilities/wpdocs/${ability}/run`;
+}
+
+export function clonePlan(endpoint) {
+  return ['git', 'clone', '--depth', '1', endpoint, '<ephemeral-content-root>'];
+}
+
+export function selectQueuedPublication(requests) {
+  if (!Array.isArray(requests)) throw new Error('WordPress returned an invalid publication queue.');
+  return requests.findLast((request) => request?.state === 'queued') ?? null;
+}
+
 export function redact(value, secrets = []) {
   return secrets.reduce((result, secret) => secret ? result.split(secret).join('[REDACTED]') : result, String(value));
 }
@@ -67,10 +80,10 @@ export function planSetup({ origin, contentRoot, space = DEFAULT_SPACE, customHo
     ['git', 'ls-remote', gitEndpoint],
     ['npm', 'run', 'build'],
     ['sf', 'status', '--json'],
-    ['sf', 'publish', 'dist', '--prebuilt', '--space', space, '--yes', '--wait']
+    ['sf', 'publish', 'dist', '--space', space, '--yes', '--wait', '--json']
   ];
   if (customHostname) steps.push(['sf', 'domains', 'add', customHostname, '--space', space, '--yes', '--wait'], ['sf', 'domains', 'check', customHostname, '--space', space, '--wait'], ['sf', 'domains', 'diagnostics', customHostname, '--space', space]);
-  if (docsUrl) steps.push(['PUT', `${normalizedOrigin}/wp-json/wp/v2/settings`, 'wpdocs_base_url after hostname health check']);
+  if (docsUrl) steps.push(['POST', publicationEndpoint(normalizedOrigin, 'report-publication'), 'verified succeeded report updates wpdocs_base_url']);
   return { origin: normalizedOrigin, gitEndpoint, contentRoot: sourceRootFor(contentRoot), steps };
 }
 
@@ -78,7 +91,7 @@ export function approved(environment = process.env) {
   return environment.WP_DOCS_ALLOW_SETUP === '1';
 }
 
-function run(command, args, environment = process.env) {
+export function run(command, args, environment = process.env) {
   const result = spawnSync(command, args, { env: environment, encoding: 'utf8', stdio: 'pipe' });
   if (result.error || result.status !== 0) throw new Error(`${command} check failed.`);
   return result.stdout;
@@ -94,7 +107,7 @@ function attachedHostnames(space, environment) {
   return Array.isArray(result.data) ? result.data.map((domain) => domain.name) : [];
 }
 
-function withoutWordPressCredentials(environment) {
+export function withoutWordPressCredentials(environment) {
   const sanitized = { ...environment };
   delete sanitized.WP_DOCS_APP_PASSWORD;
   delete sanitized.WP_DOCS_GIT_PASSWORD;
@@ -128,41 +141,92 @@ async function wpRequest(url, credentials, options = {}) {
   return response;
 }
 
+export async function callAbility(origin, ability, credentials, input = {}) {
+  const readonly = ability === 'preview-publication' || ability === 'get-publication-status';
+  const options = readonly ? { method: 'GET' } : {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input)
+  };
+  const response = await wpRequest(publicationEndpoint(origin, ability), credentials, options);
+  const body = await response.json();
+  return body.data ?? body;
+}
+
 async function gitEnvironment(credentials) {
   const directory = await mkdtemp(join(tmpdir(), 'wpdocs-askpass-'));
   const helper = join(directory, 'askpass');
   await writeFile(helper, '#!/bin/sh\ncase "$1" in *Username*) printf %s "$WP_DOCS_GIT_USERNAME" ;; *) printf %s "$WP_DOCS_GIT_PASSWORD" ;; esac\n', { mode: 0o700 });
-  return { directory, environment: { ...process.env, GIT_ASKPASS: helper, GIT_TERMINAL_PROMPT: '0', WP_DOCS_GIT_USERNAME: credentials.username, WP_DOCS_GIT_PASSWORD: credentials.password } };
+  return { directory, environment: { ...withoutWordPressCredentials(process.env), GIT_ASKPASS: helper, GIT_TERMINAL_PROMPT: '0', WP_DOCS_GIT_USERNAME: credentials.username, WP_DOCS_GIT_PASSWORD: credentials.password } };
+}
+
+export async function clonePushMd(endpoint, credentials) {
+  const directory = await mkdtemp(join(tmpdir(), 'wpdocs-content-'));
+  const askpass = await gitEnvironment(credentials);
+  try {
+    run('git', ['clone', '--depth', '1', endpoint, directory], askpass.environment);
+    if (contentKind(directory) !== 'push-md') throw new Error('Push MD endpoint did not contain wpdocs_document/.');
+    return { directory, version: run('git', ['-C', directory, 'rev-parse', 'HEAD'], askpass.environment).trim() };
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true });
+    throw error;
+  } finally {
+    await rm(askpass.directory, { recursive: true, force: true });
+  }
 }
 
 async function main() {
   const environment = process.env;
   let password = environment.WP_DOCS_APP_PASSWORD || '';
+  let credentials;
+  let plan;
+  let request;
+  let claimed = false;
+  let temporaryContent = '';
   try {
     const dryRun = process.argv.includes('--dry-run');
-    const contentRoot = environment.WP_DOCS_CONTENT_ROOT || 'content/runtime';
+    const seedMode = environment.WP_DOCS_SEED_CONTENT === '1';
+    const contentRoot = environment.WP_DOCS_CONTENT_ROOT || (seedMode ? 'content/runtime' : '');
     const space = environment.WP_DOCS_SPACEFAST_TARGET || DEFAULT_SPACE;
     const customHostname = environment.WP_DOCS_CUSTOM_HOSTNAME ? normalizeHostname(environment.WP_DOCS_CUSTOM_HOSTNAME) : '';
     const configuredDocsUrl = environment.WP_DOCS_DOCS_URL || (customHostname ? `https://${customHostname}` : '');
     if (!dryRun && !configuredDocsUrl) throw new Error('WP_DOCS_DOCS_URL is required before an approved run can mutate Spacefast.');
     const docsUrl = configuredDocsUrl ? normalizeDocsUrl(configuredDocsUrl) : '';
-    const plan = planSetup({ origin: environment.WP_DOCS_ORIGIN || '', contentRoot, space, customHostname, docsUrl });
-    const credentials = await credential(environment);
+    plan = planSetup({ origin: environment.WP_DOCS_ORIGIN || '', contentRoot: contentRoot || 'content/runtime', space, customHostname, docsUrl });
+    credentials = await credential(environment);
     password = credentials.password;
     const childEnvironment = withoutWordPressCredentials(environment);
 
     for (const command of ['node', 'npm', 'git', 'sf']) run(command, ['--version'], childEnvironment);
-    contentKind(contentRoot);
     await wpRequest(`${plan.origin}/wp-json/wp/v2/settings?context=edit`, credentials);
     const askpass = await gitEnvironment(credentials);
     try { run('git', ['ls-remote', plan.gitEndpoint], askpass.environment); } finally { await rm(askpass.directory, { recursive: true, force: true }); }
     run('sf', ['status', '--json'], childEnvironment);
     const attached = attachedHostnames(space, childEnvironment).includes(customHostname);
-    process.stdout.write(`Preflight passed. Content: ${contentKind(contentRoot)}. Planned publication: sf publish dist --prebuilt --space ${space}.\n`);
+    let preflightRoot = contentRoot;
+    let preflightClone;
+    if (!preflightRoot) {
+      preflightClone = await clonePushMd(plan.gitEndpoint, credentials);
+      preflightRoot = preflightClone.directory;
+    }
+    try { process.stdout.write(`Preflight passed. Content: ${contentKind(preflightRoot)}. Planned publication: sf publish dist --space ${space} --wait --json.\n`); } finally { if (preflightClone) await rm(preflightClone.directory, { recursive: true, force: true }); }
     if (dryRun) return;
     if (!approved(environment)) throw new Error('Setup is approval-gated. Re-run with WP_DOCS_ALLOW_SETUP=1 after explicit approval, or use --dry-run.');
-    run('npm', ['run', 'build'], { ...childEnvironment, WP_DOCS_CONTENT_ROOT: contentRoot });
-    run('node', ['scripts/publish-spacefast.mjs'], { ...childEnvironment, WP_DOCS_ALLOW_PUBLISH: '1' });
+    request = selectQueuedPublication(await callAbility(plan.origin, 'get-publication-status', credentials));
+    if (!request) {
+      process.stdout.write('No queued WordPress publication request exists. Nothing was published.\n');
+      return;
+    }
+    await callAbility(plan.origin, 'report-publication', credentials, { request_id: request.request_id, state: 'running' });
+    claimed = true;
+    let buildRoot = contentRoot;
+    let version = 'seed';
+    if (!buildRoot) {
+      const clone = await clonePushMd(plan.gitEndpoint, credentials);
+      temporaryContent = clone.directory;
+      buildRoot = clone.directory;
+      version = clone.version;
+    }
+    run('npm', ['run', 'build'], { ...childEnvironment, WP_DOCS_CONTENT_ROOT: buildRoot });
+    const publication = JSON.parse(run('node', ['scripts/publish-spacefast.mjs'], { ...childEnvironment, WP_DOCS_ALLOW_PUBLISH: '1' }));
     if (customHostname) {
       if (!attached) run('sf', ['domains', 'add', customHostname, '--space', space, '--yes', '--wait'], childEnvironment);
       run('sf', ['domains', 'check', customHostname, '--space', space, '--wait'], childEnvironment);
@@ -170,11 +234,25 @@ async function main() {
     }
     const served = await fetch(docsUrl, { redirect: 'follow' });
     if (!served.ok) throw new Error(`Documentation hostname is not serving yet (${served.status}); wpdocs_base_url was not changed.`);
-    await wpRequest(`${plan.origin}/wp-json/wp/v2/settings`, credentials, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ wpdocs_base_url: docsUrl }) });
+    await callAbility(plan.origin, 'report-publication', credentials, {
+      request_id: request.request_id, state: 'succeeded', verified: true,
+      artifact: {
+        serving_url: docsUrl,
+        version: publication.versionId,
+        identifier: publication.spaceId,
+        immutable_url: publication.immutableUrl,
+        source_revision: version
+      }
+    });
     process.stdout.write('Setup completed. WordPress now links document previews to the serving documentation hostname.\n');
   } catch (error) {
+    if (credentials && plan && request && claimed) {
+      try { await callAbility(plan.origin, 'report-publication', credentials, { request_id: request.request_id, state: 'failed', failure: redact(error.message, [password]) }); } catch { /* Preserve the original failure. */ }
+    }
     process.stderr.write(`${redact(error.message, [password])}\n`);
     process.exitCode = 1;
+  } finally {
+    if (temporaryContent) await rm(temporaryContent, { recursive: true, force: true });
   }
 }
 
