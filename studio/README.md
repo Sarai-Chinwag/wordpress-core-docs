@@ -26,6 +26,6 @@ The live verifier is separate from the offline `tests/verify-studio-spacefast.sh
 3. Edit through wp-admin or the same local interface, review the Markdown changes, and commit them to Git.
 4. Run `npm run build`; it requires neither Studio nor credentials.
 5. Run `bash tests/verify-studio-spacefast.sh`; it uses the committed corpus and needs neither Studio nor credentials.
-6. After a human explicitly approves publication, build the approved artifact and run `WP_DOCS_ALLOW_PUBLISH=1 npm run publish:spacefast`, which invokes `sf deploy dist --prebuilt`. Use `npm run publish:spacefast -- --dry-run` first; it invokes `sf deploy dist --prebuilt --dry-run`.
+6. After a human explicitly approves publication, build the approved artifact and run `WP_DOCS_ALLOW_PUBLISH=1 npm run publish:spacefast`, which invokes `sf publish dist --wait --json`. Use `npm run publish:spacefast -- --dry-run` first; it invokes `sf publish dist --dry-run --json`.
 
 Studio Code is one possible client for these operations, not a required dependency. Any agent with stable Studio CLI/MCP and local WordPress access can use the same sequence.

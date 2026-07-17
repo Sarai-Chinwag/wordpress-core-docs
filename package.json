@@ -8,7 +8,8 @@
     "check": "blume check",
     "verify:studio": "bash tests/verify-studio-mdi.sh",
     "verify:studio:mutate": "bash tests/verify-studio-mdi.sh --mutate",
-    "publish:spacefast": "node scripts/publish-spacefast.mjs"
+    "publish:spacefast": "node scripts/publish-spacefast.mjs",
+    "test": "bash tests/verify-wordpress-plugin.sh"
   },
   "devDependencies": {
     "blume": "1.0.4",

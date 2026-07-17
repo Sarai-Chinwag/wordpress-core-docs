@@ -5,3 +5,4 @@ dist/
 .blume-content/
 frontend/src/generated/
 frontend/public/media/
+.spacefast/state.json

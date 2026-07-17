@@ -1,8 +1,12 @@
+import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import matter from 'gray-matter';
 
-const sourceRoot = 'content/runtime';
+const configuredRoot = process.env.WP_DOCS_CONTENT_ROOT || 'content/runtime';
+const sourceRoot = existsSync(join(configuredRoot, 'wpdocs_document'))
+  ? join(configuredRoot, 'wpdocs_document')
+  : configuredRoot;
 const outputRoot = '.blume-content';
 
 async function markdownFiles(directory) {
@@ -31,7 +35,8 @@ for (const sourcePath of await markdownFiles(sourceRoot)) {
   await writeFile(outputPath, matter.stringify(document.content, metadata));
 }
 
-const landingPages = {
+const bundledCorpus = existsSync(join(sourceRoot, 'documentation')) && existsSync(join(sourceRoot, 'helphub_article'));
+const landingPages = bundledCorpus ? {
   'index.md': `---
 title: WP Docs
 description: WordPress.com developer documentation and WordPress.org documentation.
@@ -55,6 +60,14 @@ description: Documentation for using and developing with WordPress.
 ---
 
 # WordPress.org documentation
+`
+} : {
+  'index.md': `---
+title: WP Docs
+description: Documentation published from WordPress through Push MD.
+---
+
+# WP Docs
 `
 };
 
