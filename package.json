@@ -9,8 +9,7 @@
     "verify:studio": "bash tests/verify-studio-mdi.sh",
     "verify:studio:mutate": "bash tests/verify-studio-mdi.sh --mutate",
     "publish:spacefast": "node scripts/publish-spacefast.mjs",
-    "setup:customer": "node scripts/setup-customer.mjs",
-    "test:setup": "node --test tests/setup-customer.test.mjs"
+    "test": "bash tests/verify-wordpress-plugin.sh"
   },
   "devDependencies": {
     "blume": "1.0.4",

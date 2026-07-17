@@ -6,7 +6,7 @@ The goal is to produce comprehensive, massively useful WordPress documentation t
 
 ## Publishing Model
 
-For the hosted editorial workflow, WordPress is the editorial source of truth. Push MD/Git is the accepted review boundary for Markdown changes, and the static artifact is built and deployed by a publication adapter. Markdown Database Integration (MDI) primary mode gives WordPress Studio and wp-admin a local editing interface for the bundled corpus; Studio Code is an optional client, not a dependency.
+For the hosted editorial workflow, WordPress is the editorial source of truth. Push MD is the Markdown export boundary and WordPress submits the deterministic static source archive directly to Spacefast. Markdown Database Integration (MDI) primary mode gives WordPress Studio and wp-admin a local editing interface for the bundled corpus; Studio Code is an optional client, not a dependency.
 
 Blume reads `content/runtime/` directly (or `WP_DOCS_CONTENT_ROOT` when building a Push MD clone) and owns the generated Astro presentation, local search, and static SEO output. Spacefast is the first publication adapter and receives only the checked `dist/` artifact through `sf publish dist`.
 
@@ -20,7 +20,7 @@ Blume reads `content/runtime/` directly (or `WP_DOCS_CONTENT_ROOT` when building
 - `content/runtime/` — canonical MDI Markdown corpus: 89 WordPress.com documents and 314 WordPress.org HelpHub articles.
 - `blume.config.ts` — Blume presentation, navigation, SEO, AI, and static deployment configuration.
 - `studio/` — local MDI/Studio authoring contract.
-- `scripts/` — build adapters and approval-gated publishing command.
+- `scripts/` — local Blume build adapters. Hosted publication runs inside WordPress.
 - `docs/` — project architecture, decisions, and operating notes.
 - `plugins/wp-docs/` — installable local WordPress editorial and Markdown artifact plugin; see `docs/wordpress-plugin.md`.
 
@@ -54,8 +54,13 @@ That archive is useful as seed material and historical context, but it is not th
 
 ## Verify A Fresh Checkout
 
-1. Install Node.js 22.12 or newer and run `bash tests/verify-studio-spacefast.sh`.
-2. Inspect `dist/documentation/developer-tools/wp-cli/common-commands/index.html` and `dist/helphub_article/search-block/index.html` for representative nested and HelpHub routes.
-3. Blume builds from Git Markdown without a running Studio site. Use Studio's MDI primary mode to edit the corpus locally, then commit those Markdown changes and rerun the build.
-4. Before any human-approved publication, run `npm run publish:spacefast -- --dry-run`, which invokes `sf publish dist --dry-run --json`. An approved publication invokes `sf publish dist --wait --json`; the wrapper only considers `dist/` and makes no mutation without `WP_DOCS_ALLOW_PUBLISH=1`.
-5. For a customer WordPress site, use the one-shot guide in `docs/customer-setup.md`. Its preflight is non-mutating and the approved run requires `WP_DOCS_ALLOW_SETUP=1`.
+1. Install Node.js 22.12 or newer and run `npm ci`.
+2. Run `npm test`.
+3. Confirm the deterministic archive, request idempotency, upload, state mapping, resume, success, failure, and redaction tests pass.
+4. See `plugins/wp-docs/README.md` for WordPress runtime steps.
+
+## AI assistance
+
+- **AI assistance:** Yes
+- **Tool(s):** OpenAI gpt-5.6-terra via OpenCode
+- **Used for:** Implementing and testing the WordPress-owned hosted publication candidate.

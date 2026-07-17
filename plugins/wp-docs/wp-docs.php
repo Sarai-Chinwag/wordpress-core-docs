@@ -233,10 +233,13 @@ final class WPDocs_Plugin {
 
 	public static function register_abilities() {
 		$abilities = array(
-			'preview-publication' => array( 'Preview publication', 'Returns the Push MD source and current WP Docs publication context.', 'preview', true, array( 'readonly' => true, 'destructive' => false, 'idempotent' => true ) ),
-			'request-publication' => array( 'Request publication', 'Queues an explicit publication request for the credentialed external runner.', 'request', false, array( 'readonly' => false, 'destructive' => false, 'idempotent' => true ) ),
+			'preview-publication' => array( 'Preview publication', 'Returns WordPress-owned publication context.', 'preview', true, array( 'readonly' => true, 'destructive' => false, 'idempotent' => true ) ),
+			'request-publication' => array( 'Request publication', 'Exports published documents and starts a Spacefast build.', 'request', false, array( 'readonly' => false, 'destructive' => false, 'idempotent' => true ) ),
 			'get-publication-status' => array( 'Get publication status', 'Returns a durable publication request status record.', 'status', true, array( 'readonly' => true, 'destructive' => false, 'idempotent' => true ) ),
-			'report-publication' => array( 'Report publication', 'Records a runner state transition and verified publication evidence.', 'report', false, array( 'readonly' => false, 'destructive' => false, 'idempotent' => false ) ),
+			'reconcile-publication' => array( 'Reconcile publication', 'Polls the provider build state.', 'reconcile', false, array( 'readonly' => false, 'destructive' => false, 'idempotent' => true ) ),
+			'resume-publication' => array( 'Resume publication', 'Resumes a provider source upload.', 'resume', false, array( 'readonly' => false, 'destructive' => false, 'idempotent' => true ) ),
+			'retry-publication' => array( 'Retry publication', 'Creates a fresh request after an unsuccessful terminal state.', 'retry', false, array( 'readonly' => false, 'destructive' => false, 'idempotent' => false ) ),
+			'cancel-publication' => array( 'Cancel publication', 'Cancels a provider build where supported.', 'cancel', false, array( 'readonly' => false, 'destructive' => true, 'idempotent' => true ) ),
 		);
 		foreach ( $abilities as $name => $definition ) {
 			wp_register_ability( 'wpdocs/' . $name, array(
@@ -251,15 +254,7 @@ final class WPDocs_Plugin {
 
 	private static function publication_input_schema( $operation ) {
 		$schema = array( 'type' => 'object', 'additionalProperties' => false, 'properties' => array() );
-		if ( 'request' === $operation ) { $schema['properties']['source_git_endpoint'] = array( 'type' => 'string', 'format' => 'uri' ); }
-		if ( 'status' === $operation ) { $schema['properties']['request_id'] = array( 'type' => 'string' ); }
-		if ( 'report' === $operation ) {
-			$schema['properties'] = array(
-				'request_id' => array( 'type' => 'string' ), 'state' => array( 'type' => 'string', 'enum' => array( 'running', 'succeeded', 'failed' ) ), 'verified' => array( 'type' => 'boolean' ), 'failure' => array( 'type' => 'string', 'maxLength' => 500 ),
-				'artifact' => array( 'type' => 'object', 'additionalProperties' => false, 'properties' => array( 'serving_url' => array( 'type' => 'string', 'format' => 'uri' ), 'version' => array( 'type' => 'string' ), 'identifier' => array( 'type' => 'string' ), 'immutable_url' => array( 'type' => 'string', 'format' => 'uri' ), 'source_revision' => array( 'type' => 'string' ) ) ),
-			);
-			$schema['required'] = array( 'request_id', 'state' );
-		}
+		if ( in_array( $operation, array( 'status', 'reconcile', 'resume', 'retry', 'cancel' ), true ) ) { $schema['properties']['request_id'] = array( 'type' => 'string' ); $schema['required'] = array( 'request_id' ); }
 		return $schema;
 	}
 
