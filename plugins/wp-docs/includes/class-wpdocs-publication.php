@@ -112,7 +112,11 @@ final class WPDocs_Publication {
 		if ( is_wp_error( $response ) ) {
 			return self::fail( $request, $response->get_error_message() );
 		}
-		return self::transition( $request, 'canceled', array( 'provider_state' => 'canceled' ) );
+		$build = WPDocs_Spacefast_Response::build( $response );
+		if ( is_wp_error( $build ) || $request['build_id'] !== $build['id'] ) {
+			return self::fail( $request, is_wp_error( $build ) ? $build->get_error_message() : 'Spacefast did not return the canceled build.' );
+		}
+		return self::transition( $request, $build['state'], array( 'provider_state' => $build['state'] ) );
 	}
 
 	public static function archive() {
@@ -149,7 +153,7 @@ final class WPDocs_Publication {
 		if ( is_wp_error( $credentials ) ) {
 			return self::fail( $request, $credentials->get_error_message() );
 		}
-		$response = self::api( 'POST', '/v1/spaces/' . rawurlencode( $credentials['space_id'] ) . '/builds', array( 'input' => array( 'kind' => 'archive' ), 'channel' => 'live', 'preview' => false ), $request['request_id'] );
+		$response = self::api( 'POST', '/v1/spaces/' . rawurlencode( $credentials['space_id'] ) . '/builds', array( 'input' => array( 'kind' => 'archive' ), 'target' => array( 'channel' => 'live', 'preview' => false ), 'wait' => false ), $request['request_id'] );
 		if ( is_wp_error( $response ) ) {
 			return self::fail( $request, $response->get_error_message() );
 		}
@@ -160,7 +164,12 @@ final class WPDocs_Publication {
 		if ( empty( $build['id'] ) ) {
 			return self::fail( $request, 'Spacefast did not return a build identifier.' );
 		}
-		$request = self::transition( $request, 'uploading_source', array( 'build_id' => $build['id'], 'provider_state' => $build['state'] ) );
+		$upload = WPDocs_Spacefast_Response::upload( $response );
+		if ( is_wp_error( $upload ) ) {
+			return self::fail( $request, $upload->get_error_message() );
+		}
+		$state   = null === $upload && in_array( $build['state'], array( 'queued', 'running' ), true ) ? $build['state'] : 'uploading_source';
+		$request = self::transition( $request, $state, array( 'build_id' => $build['id'], 'provider_state' => $build['state'] ) );
 		if ( is_wp_error( $request ) ) {
 			return $request;
 		}
@@ -179,15 +188,27 @@ final class WPDocs_Publication {
 			if ( is_wp_error( $archive ) ) {
 				return self::fail( $request, $archive->get_error_message() );
 			}
-			$headers = array();
-			foreach ( $upload['headers'] as $name => $value ) {
-				if ( 0 === strcasecmp( $name, 'Authorization' ) ) {
-					continue;
-				}
-				$headers[ $name ] = $value;
+			$credentials = self::credentials();
+			if ( is_wp_error( $credentials ) ) {
+				return self::fail( $request, $credentials->get_error_message() );
 			}
-			$headers['Content-Type'] = 'application/gzip';
-			$uploaded = wp_remote_request( $upload['url'], array( 'method' => $upload['method'], 'headers' => $headers, 'body' => $archive, 'timeout' => 60 ) );
+			if ( isset( $upload['max_bytes'] ) && strlen( $archive ) > $upload['max_bytes'] ) {
+				return self::fail( $request, 'Spacefast source upload exceeds the target size limit.' );
+			}
+			$url = self::upload_url( $upload['url'], $credentials['api_url'] );
+			if ( is_wp_error( $url ) ) {
+				return self::fail( $request, $url->get_error_message() );
+			}
+			$headers = $upload['headers'];
+			if ( $upload['content_type'] ) {
+				$headers['Content-Type'] = $upload['content_type'];
+			} elseif ( ! self::has_header( $headers, 'Content-Type' ) ) {
+				$headers['Content-Type'] = 'application/gzip';
+			}
+			if ( self::same_origin( $url, $credentials['api_url'] ) ) {
+				$headers['Authorization'] = 'Bearer ' . $credentials['token'];
+			}
+			$uploaded = wp_remote_request( $url, array( 'method' => $upload['method'], 'headers' => $headers, 'body' => $archive, 'timeout' => 60 ) );
 			if ( is_wp_error( $uploaded ) || wp_remote_retrieve_response_code( $uploaded ) >= 300 ) {
 				return self::fail( $request, 'Spacefast source upload failed.' );
 			}
@@ -207,17 +228,24 @@ final class WPDocs_Publication {
 		if ( ! self::transition_allowed( $request['state'], $build['state'] ) ) {
 			return new WP_Error( 'wpdocs_stale_transition', 'Provider state does not match the durable request state.', array( 'status' => 409 ) );
 		}
-		if ( 'succeeded' === $build['state'] && ( ! $build['version_id'] || ! $build['serving_url'] ) ) {
-			return self::fail( $request, 'Spacefast success response lacks a version or HTTPS serving URL.' );
+		$base_url = '';
+		if ( 'succeeded' === $build['state'] ) {
+			if ( ! $build['version_id'] ) {
+				return self::fail( $request, 'Spacefast success response lacks a version.' );
+			}
+			$base_url = self::verified_base_url( $build['version_id'], $request['build_id'], $request['request_id'] );
+			if ( is_wp_error( $base_url ) ) {
+				return self::fail( $request, $base_url->get_error_message() );
+			}
 		}
-		return self::transition( $request, $build['state'], array( 'provider_state' => $build['state'], 'version_id' => $build['version_id'], 'failure' => $build['failure'] ), $build['serving_url'] );
+		return self::transition( $request, $build['state'], array( 'provider_state' => $build['state'], 'version_id' => $build['version_id'], 'failure' => $build['failure'] ), $base_url );
 	}
 
 	public static function transition_allowed( $from, $to ) {
 		$transitions = array(
-			'waiting_for_source' => array( 'uploading_source', 'failed', 'canceled' ),
-			'uploading_source'   => array( 'queued', 'running', 'failed', 'canceled' ),
-			'queued'             => array( 'queued', 'running', 'failed', 'canceled', 'skipped' ),
+			'waiting_for_source' => array( 'uploading_source', 'queued', 'running', 'failed', 'canceled' ),
+			'uploading_source'   => array( 'waiting_for_source', 'queued', 'running', 'succeeded', 'failed', 'canceled', 'skipped' ),
+			'queued'             => array( 'queued', 'running', 'succeeded', 'failed', 'canceled', 'skipped' ),
 			'running'            => array( 'running', 'succeeded', 'failed', 'canceled', 'skipped' ),
 		);
 		return isset( $transitions[ $from ] ) && in_array( $to, $transitions[ $from ], true );
@@ -331,6 +359,47 @@ final class WPDocs_Publication {
 		return $decoded['data'];
 	}
 
+	private static function verified_base_url( $version_id, $build_id, $idempotency_key ) {
+		$credentials = self::credentials();
+		if ( is_wp_error( $credentials ) ) {
+			return $credentials;
+		}
+		$version = self::api( 'GET', '/v1/spaces/' . rawurlencode( $credentials['space_id'] ) . '/versions/' . rawurlencode( $version_id ), null, $idempotency_key );
+		if ( is_wp_error( $version ) || $version_id !== (string) ( $version['id'] ?? '' ) || $credentials['space_id'] !== (string) ( $version['spaceId'] ?? '' ) || ( isset( $version['buildId'] ) && $build_id !== (string) $version['buildId'] ) ) {
+			return new WP_Error( 'wpdocs_spacefast_invalid_version', 'Spacefast did not return the succeeded version.' );
+		}
+		$space = self::api( 'GET', '/v1/spaces/' . rawurlencode( $credentials['space_id'] ), null, $idempotency_key );
+		$url   = is_array( $space ) && $credentials['space_id'] === (string) ( $space['id'] ?? '' ) ? WPDocs_Spacefast_Response::serving_url( $space ) : '';
+		return $url ? $url : new WP_Error( 'wpdocs_spacefast_invalid_space', 'Spacefast did not return an HTTPS serving URL for the succeeded version.' );
+	}
+
+	private static function upload_url( $url, $api_url ) {
+		if ( 0 === strpos( $url, '/' ) ) {
+			$api = wp_parse_url( $api_url );
+			$url = $api['scheme'] . '://' . $api['host'] . ( isset( $api['port'] ) ? ':' . $api['port'] : '' ) . $url;
+		}
+		$parts = wp_parse_url( $url );
+		if ( ! is_array( $parts ) || 'https' !== strtolower( $parts['scheme'] ?? '' ) || isset( $parts['user'] ) || isset( $parts['pass'] ) ) {
+			return new WP_Error( 'wpdocs_spacefast_invalid_upload', 'Spacefast returned an invalid upload URL.' );
+		}
+		return $url;
+	}
+
+	private static function same_origin( $first, $second ) {
+		$first  = wp_parse_url( $first );
+		$second = wp_parse_url( $second );
+		return strtolower( $first['scheme'] ) === strtolower( $second['scheme'] ) && strtolower( $first['host'] ) === strtolower( $second['host'] ) && ( $first['port'] ?? 443 ) === ( $second['port'] ?? 443 );
+	}
+
+	private static function has_header( $headers, $name ) {
+		foreach ( $headers as $header => $value ) {
+			if ( 0 === strcasecmp( $header, $name ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	private static function redact( $value ) {
 		$value = preg_replace( '#(Bearer\s+|token[=:]\s*)[^\s,]+#i', '$1[REDACTED]', (string) $value );
 		$value = preg_replace( '#https?://[^\s/@]+:[^\s/@]+@#', '[REDACTED]@', $value );
@@ -370,6 +439,10 @@ final class WPDocs_Publication {
 
 final class WPDocs_Spacefast_Response {
 	public static function build( $response ) {
+		$response = isset( $response['build'] ) ? $response['build'] : $response;
+		if ( ! is_array( $response ) ) {
+			return new WP_Error( 'wpdocs_spacefast_invalid_build', 'Spacefast returned an invalid build.' );
+		}
 		$state = isset( $response['status'] ) ? (string) $response['status'] : '';
 		if ( ! in_array( $state, array( 'waiting_for_source', 'uploading_source', 'queued', 'running', 'succeeded', 'failed', 'canceled', 'skipped' ), true ) ) {
 			return new WP_Error( 'wpdocs_spacefast_invalid_state', 'Spacefast returned an unknown build state.' );
@@ -379,25 +452,31 @@ final class WPDocs_Spacefast_Response {
 			$version = sanitize_text_field( $response['reusedVersionId'] );
 		}
 		return array(
-			'id'          => isset( $response['buildId'] ) ? sanitize_text_field( $response['buildId'] ) : '',
+			'id'          => isset( $response['id'] ) ? sanitize_text_field( $response['id'] ) : '',
 			'state'       => $state,
 			'version_id'  => $version,
-			'serving_url' => isset( $response['siteUrl'] ) ? self::url( $response['siteUrl'] ) : '',
 			'failure'     => isset( $response['error'] ) ? $response['error'] : '',
 		);
 	}
 
 	public static function upload( $response ) {
-		if ( ! isset( $response['upload'] ) ) {
+		if ( ! array_key_exists( 'upload', $response ) || null === $response['upload'] ) {
 			return null;
 		}
-		$upload = $response['upload'];
-		$parts  = is_array( $upload ) && ! empty( $upload['url'] ) ? wp_parse_url( $upload['url'] ) : false;
-		$method = is_array( $upload ) && isset( $upload['method'] ) ? strtoupper( $upload['method'] ) : '';
-		if ( ! is_array( $upload ) || empty( $upload['url'] ) || ! in_array( $method, array( 'PUT', 'POST' ), true ) || ! isset( $upload['headers'] ) || ! is_array( $upload['headers'] ) || ! esc_url_raw( $upload['url'] ) || ! is_array( $parts ) || 'https' !== strtolower( $parts['scheme'] ) || isset( $parts['user'] ) || isset( $parts['pass'] ) ) {
+		if ( ! is_array( $response['upload'] ) || empty( $response['upload']['targets'] ) || ! is_array( $response['upload']['targets'] ) ) {
 			return new WP_Error( 'wpdocs_spacefast_invalid_upload', 'Spacefast returned invalid upload instructions.' );
 		}
-		return array( 'url' => esc_url_raw( $upload['url'] ), 'method' => $method, 'headers' => $upload['headers'] );
+		$target = $response['upload']['targets'][0];
+		$method = is_array( $target ) && isset( $target['method'] ) ? strtoupper( $target['method'] ) : '';
+		$parts  = is_array( $target ) && is_string( $target['url'] ?? null ) && false !== strpos( $target['url'], '://' ) ? wp_parse_url( $target['url'] ) : null;
+		if ( ! is_array( $target ) || empty( $target['path'] ) || empty( $target['url'] ) || ! in_array( $method, array( 'PUT', 'POST' ), true ) || ! isset( $target['headers'] ) || ! is_array( $target['headers'] ) || ! is_string( $target['url'] ) || preg_match( '#^//#', $target['url'] ) || ( false === strpos( $target['url'], '://' ) && 0 !== strpos( $target['url'], '/' ) ) || ( is_array( $parts ) && ( 'https' !== strtolower( $parts['scheme'] ?? '' ) || isset( $parts['user'] ) || isset( $parts['pass'] ) ) ) || ( isset( $target['maxBytes'] ) && ( ! is_int( $target['maxBytes'] ) || $target['maxBytes'] < 0 ) ) ) {
+			return new WP_Error( 'wpdocs_spacefast_invalid_upload', 'Spacefast returned invalid upload instructions.' );
+		}
+		return array( 'url' => $target['url'], 'method' => $method, 'headers' => $target['headers'], 'content_type' => isset( $target['contentType'] ) ? (string) $target['contentType'] : '', 'max_bytes' => $target['maxBytes'] ?? null );
+	}
+
+	public static function serving_url( $space ) {
+		return isset( $space['liveUrl'] ) ? self::url( $space['liveUrl'] ) : '';
 	}
 
 	private static function url( $url ) {

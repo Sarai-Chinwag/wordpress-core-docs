@@ -117,34 +117,54 @@ check( "# Alpha\n" === $entries[2]['body'] && "# Zulu\n" === $entries[3]['body']
 foreach ( array( '../escape.md', '/absolute.md', 'folder\\escape.md', 'other_type/slug.md', 'wpdocs_document/../escape.md', 'wpdocs_document//empty.md', 'wpdocs_document/' . str_repeat( 'a', 90 ) . '.md' ) as $path ) { $wpdocs_paths[1] = $path; check( is_wp_error( WPDocs_Publication::archive() ), 'unsafe Push MD path accepted: ' . $path ); }
 $wpdocs_paths = array();
 
-$wpdocs_remote = array( response( array( 'buildId' => 'build_1', 'status' => 'waiting_for_source', 'upload' => array( 'url' => 'https://upload.example.test/source', 'method' => 'POST', 'headers' => array( 'X-Signed' => 'yes', 'Authorization' => 'Bearer provider-token' ) ) ) ), array( 'code' => 204, 'body' => '' ), response( array( 'buildId' => 'build_1', 'status' => 'queued' ) ) );
+$wpdocs_remote = array( response( array( 'build' => array( 'id' => 'build_1', 'status' => 'waiting_for_source' ), 'upload' => array( 'targets' => array( array( 'path' => 'source', 'url' => 'https://upload.example.test/source', 'method' => 'POST', 'headers' => array( 'X-Signed' => 'yes', 'Authorization' => 'Bearer provider-token' ), 'contentType' => 'application/x-gzip', 'maxBytes' => 100000 ), array( 'path' => 'unused', 'url' => 'https://upload.example.test/unused', 'method' => 'PUT', 'headers' => array() ) ) ) ) ), array( 'code' => 204, 'body' => '' ), response( array( 'id' => 'build_1', 'status' => 'waiting_for_source' ) ) );
 $request = WPDocs_Publication::request();
-check( 'queued' === $request['state'] && 'build_1' === $request['build_id'], 'request state not persisted' );
+check( 'waiting_for_source' === $request['state'] && 'build_1' === $request['build_id'], 'request state not persisted' );
 check( 'wpdocs-00000000-0000-4000-8000-000000000001' === $wpdocs_calls[0][1]['headers']['Idempotency-Key'], 'idempotency key changed' );
-check( 'POST' === $wpdocs_calls[1][1]['method'] && 'yes' === $wpdocs_calls[1][1]['headers']['X-Signed'] && 'application/gzip' === $wpdocs_calls[1][1]['headers']['Content-Type'] && ! isset( $wpdocs_calls[1][1]['headers']['Authorization'] ), 'upload contract leaked credentials or changed instructions' );
-$wpdocs_remote = array( response( array( 'buildId' => 'build_1', 'status' => 'running' ) ) );
+check( array( 'input' => array( 'kind' => 'archive' ), 'target' => array( 'channel' => 'live', 'preview' => false ), 'wait' => false ) === json_decode( $wpdocs_calls[0][1]['body'], true ), 'build create body does not match the Spacefast contract' );
+check( 'POST' === $wpdocs_calls[1][1]['method'] && 'yes' === $wpdocs_calls[1][1]['headers']['X-Signed'] && 'application/x-gzip' === $wpdocs_calls[1][1]['headers']['Content-Type'] && 'Bearer provider-token' === $wpdocs_calls[1][1]['headers']['Authorization'] && 'Bearer very-secret-token' !== $wpdocs_calls[1][1]['headers']['Authorization'], 'external upload leaked the configured bearer token' );
+check( ! in_array( 'https://upload.example.test/unused', array_column( $wpdocs_calls, 0 ), true ), 'a non-source upload target received the source archive' );
+$wpdocs_remote = array( response( array( 'id' => 'build_1', 'status' => 'running' ) ) );
 $running = WPDocs_Publication::reconcile( array( 'request_id' => $request['request_id'] ) );
 check( 'running' === $running['state'], 'running state not mapped' );
 check( ! isset( $wpdocs_calls[3][1]['headers']['Idempotency-Key'] ), 'GET request sent an idempotency key' );
 $wpdb->conflict = true;
-$wpdocs_remote = array( response( array( 'buildId' => 'build_1', 'status' => 'succeeded', 'producedVersionId' => 'ver_1', 'siteUrl' => 'https://docs.example.test' ) ) );
+$wpdocs_remote = array( response( array( 'id' => 'build_1', 'status' => 'succeeded', 'producedVersionId' => 'ver_1' ) ), response( array( 'id' => 'ver_1', 'spaceId' => 'spc_123', 'buildId' => 'build_1' ) ), response( array( 'id' => 'spc_123', 'liveUrl' => 'https://docs.example.test' ) ) );
 check( is_wp_error( WPDocs_Publication::reconcile( array( 'request_id' => $running['request_id'] ) ) ) && 'running' === WPDocs_Publication::status( array( 'request_id' => $running['request_id'] ) )['state'] && '' === get_option( 'wpdocs_base_url', '' ), 'stale success overwrote concurrent state or URL' );
 $wpdb->conflict = false;
-$wpdocs_remote = array( response( array( 'buildId' => 'build_1', 'status' => 'succeeded', 'producedVersionId' => 'ver_1', 'siteUrl' => 'https://docs.example.test' ) ) );
+$wpdocs_remote = array( response( array( 'id' => 'build_1', 'status' => 'succeeded', 'producedVersionId' => 'ver_1' ) ), response( array( 'id' => 'ver_1', 'spaceId' => 'spc_123', 'buildId' => 'build_1' ) ), response( array( 'id' => 'spc_123', 'liveUrl' => 'https://docs.example.test' ) ) );
 $success = WPDocs_Publication::reconcile( array( 'request_id' => $running['request_id'] ) );
 check( 'succeeded' === $success['state'] && 'ver_1' === $success['version_id'] && 'https://docs.example.test' === get_option( 'wpdocs_base_url' ), 'verified success not persisted' );
 
-foreach ( array( response( array( 'buildId' => 'build_1', 'status' => 'unknown' ) ), array( 'code' => 500, 'body' => 'Bearer very-secret-token' ), array( 'code' => 200, 'body' => '{bad' ) ) as $bad ) { $wpdocs_remote = array( $bad ); $result = WPDocs_Publication::reconcile( array( 'request_id' => $success['request_id'] ) ); check( is_wp_error( $result ) || ( isset( $result['failure'] ) && false === strpos( $result['failure'], 'very-secret-token' ) ), 'provider error leaked secret' ); }
-$unknown = WPDocs_Spacefast_Response::build( array( 'buildId' => 'build_2', 'status' => 'unknown' ) );
+foreach ( array( response( array( 'id' => 'build_1', 'status' => 'unknown' ) ), array( 'code' => 500, 'body' => 'Bearer very-secret-token' ), array( 'code' => 200, 'body' => '{bad' ) ) as $bad ) { $wpdocs_remote = array( $bad ); $result = WPDocs_Publication::reconcile( array( 'request_id' => $success['request_id'] ) ); check( is_wp_error( $result ) || ( isset( $result['failure'] ) && false === strpos( $result['failure'], 'very-secret-token' ) ), 'provider error leaked secret' ); }
+$unknown = WPDocs_Spacefast_Response::build( array( 'build' => array( 'id' => 'build_2', 'status' => 'unknown' ) ) );
 check( is_wp_error( $unknown ), 'unknown provider state accepted' );
-$missing_success = WPDocs_Spacefast_Response::build( array( 'buildId' => 'build_2', 'status' => 'succeeded' ) );
-check( is_array( $missing_success ) && ! $missing_success['version_id'] && ! $missing_success['serving_url'], 'incomplete success fixture changed' );
-$bad_upload = WPDocs_Spacefast_Response::upload( array( 'upload' => array( 'url' => 'https://user:secret@upload.example.test', 'method' => 'PUT', 'headers' => array() ) ) );
+$missing_success = WPDocs_Spacefast_Response::build( array( 'build' => array( 'id' => 'build_2', 'status' => 'succeeded' ) ) );
+check( is_array( $missing_success ) && ! $missing_success['version_id'], 'incomplete success fixture changed' );
+$bad_upload = WPDocs_Spacefast_Response::upload( array( 'upload' => array( 'targets' => array( array( 'path' => 'source', 'url' => 'https://user:secret@upload.example.test', 'method' => 'PUT', 'headers' => array() ) ) ) ) );
 check( is_wp_error( $bad_upload ), 'credentialed upload URL was accepted' );
-$unsupported_upload = WPDocs_Spacefast_Response::upload( array( 'upload' => array( 'url' => 'https://upload.example.test/source', 'method' => 'PATCH', 'headers' => array() ) ) );
+$unsupported_upload = WPDocs_Spacefast_Response::upload( array( 'upload' => array( 'targets' => array( array( 'path' => 'source', 'url' => 'https://upload.example.test/source', 'method' => 'PATCH', 'headers' => array() ) ) ) ) );
 check( is_wp_error( $unsupported_upload ), 'unsupported upload method was accepted' );
-$wpdocs_remote = array( response( array( 'status' => 'waiting_for_source', 'upload' => array( 'url' => 'https://upload.example.test/source', 'method' => 'PUT', 'headers' => array() ) ) ) );
+$wpdocs_remote = array( response( array( 'build' => array( 'status' => 'waiting_for_source' ), 'upload' => array( 'targets' => array( array( 'path' => 'source', 'url' => 'https://upload.example.test/source', 'method' => 'PUT', 'headers' => array() ) ) ) ) ) );
 $missing_build = WPDocs_Publication::request();
 check( 'failed' === $missing_build['state'] && empty( $missing_build['build_id'] ), 'missing build identifier was persisted or uploaded' );
 check( is_wp_error( WPDocs_Publication::cancel( array( 'request_id' => $missing_build['request_id'] ) ) ), 'cancel accepted a missing build identifier' );
+$wpdocs_options = array();
+$wpdocs_calls = array();
+$wpdocs_remote = array(
+	response( array( 'build' => array( 'id' => 'build_2', 'status' => 'queued' ), 'upload' => array( 'targets' => array( array( 'path' => 'source', 'url' => '/uploads/build_2', 'method' => 'PUT', 'headers' => array( 'X-Signed' => 'yes' ), 'maxBytes' => 100000 ) ) ) ) ),
+	array( 'code' => 204, 'body' => '' ),
+	response( array( 'id' => 'build_2', 'status' => 'running' ) ),
+);
+$immediate = WPDocs_Publication::request();
+check( 'running' === $immediate['state'] && 'https://spacefast.example.test/uploads/build_2' === $wpdocs_calls[1][0] && 'Bearer very-secret-token' === $wpdocs_calls[1][1]['headers']['Authorization'], 'relative API upload did not preserve the immediate lifecycle and scoped bearer authorization' );
+$wpdocs_remote = array( response( array( 'build' => array( 'id' => 'build_2', 'status' => 'running' ), 'upload' => array( 'targets' => array( array( 'path' => 'source', 'url' => '/uploads/build_2', 'method' => 'PUT', 'headers' => array(), 'maxBytes' => 100000 ) ) ) ) ), array( 'code' => 204, 'body' => '' ), response( array( 'id' => 'build_2', 'status' => 'running' ) ) );
+check( 'running' === WPDocs_Publication::resume( array( 'request_id' => $immediate['request_id'] ) )['state'], 'resume did not accept the current upload envelope' );
+$cancel_request               = $immediate;
+$cancel_request['request_id'] = 'wpdocs-cancel-test';
+$wpdocs_options['wpdocs_publication_requests'][] = $cancel_request;
+$wpdocs_remote = array( response( array( 'id' => 'build_2', 'status' => 'canceled' ) ) );
+check( 'canceled' === WPDocs_Publication::cancel( array( 'request_id' => $cancel_request['request_id'] ) )['state'], 'cancel did not parse the flat build response' );
+$wpdocs_remote = array( response( array( 'id' => 'build_2', 'status' => 'succeeded', 'reusedVersionId' => 'ver_2' ) ), response( array( 'id' => 'ver_2', 'spaceId' => 'spc_123', 'buildId' => 'build_2' ) ), response( array( 'id' => 'spc_123', 'liveUrl' => 'http://docs.example.test' ) ) );
+check( 'failed' === WPDocs_Publication::reconcile( array( 'request_id' => $immediate['request_id'] ) )['state'] && '' === get_option( 'wpdocs_base_url', '' ), 'non-HTTPS authoritative space URL was persisted' );
 printf( "WP Docs hosted publication tests passed.\n" );
