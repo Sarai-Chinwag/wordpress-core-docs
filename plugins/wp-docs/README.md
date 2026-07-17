@@ -4,7 +4,7 @@
 
 ## Install
 
-Install and activate a Push MD build with content-adapter support, copy this directory to `wp-content/plugins/wp-docs`, activate **WP Docs**, then set **Settings > Writing > Docs base URL** to an HTTPS hostname such as `https://docs.example.com`.
+Install and activate a Push MD build with content-adapter support, copy this directory to `wp-content/plugins/wp-docs`, and activate **WP Docs**. The Docs base URL is available in **Settings > Writing** and through the authenticated core `GET`/`PUT /wp-json/wp/v2/settings` endpoint as `wpdocs_base_url`; there is no plugin-specific settings API.
 
 The plugin adds a private, hierarchical **Documents** type. Documents are editable in wp-admin and the block editor but have no WordPress public route, archive, search result, feed, rewrite, query variable, or sitemap entry. Their editor permalink and preview link point to the configured static hostname.
 
@@ -14,11 +14,11 @@ Push MD exposes the site at `/wp-json/git/v1/md.git`. Documents use nested `wpdo
 
 Taxonomy terms must already exist in WordPress before a Git push assigns them. Push MD rejects unknown or non-canonical term slugs before changing content. Existing Push MD hierarchy rules also require a nested document's parent to exist before the child is pushed.
 
-The plugin does not implement a second REST, WP-CLI, manifest, or Git synchronization protocol. Provider hosting, DNS, Git mirrors, static builds, and deployment remain separate adapters.
+The plugin does not implement a second REST, WP-CLI, manifest, or Git synchronization protocol. Provider hosting, DNS, Git mirrors, static builds, and deployment remain separate adapters. Spacefast is currently one adapter; a future Pressable or static-host adapter belongs outside this plugin.
 
 ## DNS And Static Hosting
 
-Point `docs.example.com` DNS at the chosen static host and configure that host for HTTPS. Set the same hostname as the plugin's Docs base URL. The host serves the Blume-built static artifact; WordPress remains private editorial infrastructure. This POC stops at Push MD's Git transport boundary and does not publish static output or include deployment, provider, DNS, or external Git-mirror adapters.
+Point `docs.example.com` DNS at the chosen static host and configure that host for HTTPS. Set the same hostname as the plugin's Docs base URL only after it serves the static artifact. The host serves the Blume-built static artifact; WordPress remains private editorial infrastructure. See `docs/customer-setup.md` for the provider-neutral setup command.
 
 ## Verification
 

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 npm ci
+npm run test:setup
 npm run build
 
 test -f dist/index.html
@@ -44,6 +45,6 @@ printf '%s\n' "$@" > "$SF_ARGS_FILE"
 EOF
 chmod +x "$sf_bin/sf"
 
-PATH="$sf_bin:$PATH" SF_ARGS_FILE="$sf_args" npm run publish:spacefast -- --dry-run
-printf 'deploy\ndist\n--prebuilt\n--space\nwp-docs\n--yes\n--wait\n--dry-run\n' > "$sf_expected"
+PATH="$sf_bin:$PATH" SF_ARGS_FILE="$sf_args" WP_DOCS_SPACEFAST_TARGET=customer-docs npm run publish:spacefast -- --dry-run
+printf 'publish\ndist\n--prebuilt\n--space\ncustomer-docs\n--yes\n--wait\n--dry-run\n' > "$sf_expected"
 cmp -s "$sf_expected" "$sf_args"

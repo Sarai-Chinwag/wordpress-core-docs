@@ -5,6 +5,7 @@ $wpdocs_registered_post_types = array();
 $wpdocs_registered_taxonomies = array();
 $wpdocs_adapter               = null;
 $wpdocs_hooks                 = array();
+$wpdocs_registered_settings   = array();
 $wpdocs_term_failure          = false;
 $wpdocs_term_assignments      = array();
 
@@ -19,6 +20,9 @@ function register_taxonomy( $name, $types, $args ) { global $wpdocs_registered_t
 function push_md_register_content_adapter( $post_type, $args ) { global $wpdocs_adapter; $wpdocs_adapter = array( $post_type, $args ); }
 function add_action( $name, $callback ) { global $wpdocs_hooks; $wpdocs_hooks[ $name ][] = $callback; }
 function add_filter( $name, $callback ) { global $wpdocs_hooks; $wpdocs_hooks[ $name ][] = $callback; }
+function register_setting( $group, $name, $args ) { global $wpdocs_registered_settings; $wpdocs_registered_settings[ $name ] = array( $group, $args ); }
+function add_settings_section() {}
+function add_settings_field() {}
 function is_wp_error( $value ) { return $value instanceof WPDocs_Test_Error; }
 function wp_list_pluck( $items, $field ) { return array_map( static function ( $item ) use ( $field ) { return $item->$field; }, $items ); }
 function sanitize_title( $value ) { return trim( preg_replace( '/[^a-z0-9]+/', '-', strtolower( $value ) ), '-' ); }
@@ -48,6 +52,7 @@ function wpdocs_assert( $condition, $message ) { if ( ! $condition ) { throw new
 function wpdocs_throws( $callback, $message ) { try { $callback(); } catch ( InvalidArgumentException $error ) { return; } throw new RuntimeException( $message ); }
 
 WPDocs_Plugin::register();
+WPDocs_Plugin::register_settings();
 $post_type = $wpdocs_registered_post_types['wpdocs_document'];
 wpdocs_assert( $post_type['hierarchical'] && $post_type['show_ui'] && $post_type['show_in_rest'], 'document editor registration is incomplete' );
 wpdocs_assert( ! $post_type['public'] && ! $post_type['publicly_queryable'] && ! $post_type['rewrite'] && ! $post_type['has_archive'] && ! $post_type['query_var'] && $post_type['exclude_from_search'] && ! $post_type['show_in_sitemap'], 'document must remain absent from WordPress frontend' );
@@ -58,6 +63,8 @@ wpdocs_assert( 'wpdocs_document' === $wpdocs_adapter[0], 'Push MD adapter post t
 $adapter = $wpdocs_adapter[1];
 wpdocs_assert( $adapter['hierarchical'], 'Push MD adapter must preserve document hierarchy' );
 wpdocs_assert( array( 'collections', 'topics' ) === $adapter['frontmatter_fields'], 'Push MD adapter metadata fields are wrong' );
+wpdocs_assert( $wpdocs_registered_settings['wpdocs_base_url'][1]['show_in_rest'], 'Docs base URL must use the core settings REST endpoint' );
+wpdocs_assert( isset( $wpdocs_hooks['rest_api_init'] ), 'Docs base URL setting must register during REST initialization' );
 
 $metadata = call_user_func( $adapter['export_metadata'], (object) array( 'ID' => 7 ) );
 wpdocs_assert( array( 'guides', 'reference' ) === $metadata['collections'], 'collection export is not deterministic' );

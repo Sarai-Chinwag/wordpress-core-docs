@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 const args = process.argv.slice(2);
 const dryRun = args.includes('--dry-run');
 const output = 'dist';
+const space = process.env.WP_DOCS_SPACEFAST_TARGET || 'wp-docs';
 
 if (!existsSync(output)) {
   console.error('No prebuilt dist/ directory exists. Run a build before requesting Spacefast publication.');
@@ -14,11 +15,11 @@ if (!dryRun && process.env.WP_DOCS_ALLOW_PUBLISH !== '1') {
   process.exit(1);
 }
 const result = spawnSync('sf', [
-  'deploy',
+  'publish',
   output,
   '--prebuilt',
   '--space',
-  'wp-docs',
+  space,
   '--yes',
   '--wait',
   ...(dryRun ? ['--dry-run'] : [])

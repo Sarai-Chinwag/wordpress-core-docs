@@ -90,7 +90,7 @@ final class WPDocs_Plugin {
 		}
 	}
 
-	public static function admin_init() {
+	public static function register_settings() {
 		register_setting(
 			'wpdocs',
 			self::OPTION_BASE_URL,
@@ -98,8 +98,13 @@ final class WPDocs_Plugin {
 				'type'              => 'string',
 				'sanitize_callback' => array( __CLASS__, 'sanitize_base_url' ),
 				'default'           => '',
+				'show_in_rest'      => true,
 			)
 		);
+	}
+
+	public static function admin_init() {
+		self::register_settings();
 		add_settings_section( 'wpdocs_urls', 'Static documentation', '__return_false', 'writing' );
 		add_settings_field( self::OPTION_BASE_URL, 'Docs base URL', array( __CLASS__, 'base_url_field' ), 'writing', 'wpdocs_urls' );
 	}
@@ -224,5 +229,6 @@ final class WPDocs_Plugin {
 
 add_action( 'init', array( 'WPDocs_Plugin', 'register' ) );
 add_action( 'admin_init', array( 'WPDocs_Plugin', 'admin_init' ) );
+add_action( 'rest_api_init', array( 'WPDocs_Plugin', 'register_settings' ) );
 add_filter( 'post_type_link', array( 'WPDocs_Plugin', 'document_permalink' ), 10, 4 );
 add_filter( 'preview_post_link', array( 'WPDocs_Plugin', 'document_preview_link' ), 10, 2 );
